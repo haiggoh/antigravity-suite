@@ -168,6 +168,25 @@ def sync_local_config(template_path: str, dry_run: bool = False) -> bool:
     return True
 
 
+def sync_rules(rules_dir: str, dry_run: bool = False) -> None:
+    """Sync global rules files to ~/.gemini/config/rules/."""
+    if not os.path.isdir(rules_dir):
+        return
+    dest_dir = os.path.join(get_home_dir(), ".gemini", "config", "rules")
+    if not dry_run:
+        os.makedirs(dest_dir, exist_ok=True)
+
+    for item in os.listdir(rules_dir):
+        src_file = os.path.join(rules_dir, item)
+        if os.path.isfile(src_file):
+            dest_file = os.path.join(dest_dir, item)
+            if dry_run:
+                print(f"[*] [dry-run] Would sync rule file: {item} -> {dest_file}")
+            else:
+                shutil.copy2(src_file, dest_file)
+                print(f"[✓] Synced rule file: {item} -> {dest_file}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Sync Engine")
     parser.add_argument(
@@ -175,11 +194,20 @@ def main():
         default=os.path.join(os.path.dirname(__file__), "..", "templates", "shared-settings.json"),
         help="Path to shared settings template JSON",
     )
+    parser.add_argument(
+        "--rules-dir",
+        default=os.path.join(os.path.dirname(__file__), "..", "rules"),
+        help="Path to shared rules directory",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
     args = parser.parse_args()
 
     template_path = os.path.abspath(args.template)
+    rules_path = os.path.abspath(args.rules_dir)
+    
     success = sync_local_config(template_path, dry_run=args.dry_run)
+    sync_rules(rules_path, dry_run=args.dry_run)
+    
     sys.exit(0 if success else 1)
 
 
