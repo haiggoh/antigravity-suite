@@ -1,0 +1,29 @@
+{
+  "agentMode": "accept-edits",
+  "allowNonWorkspaceAccess": true,
+  "artifactReviewPolicy": "agent-decides",
+  "colorScheme": "dark",
+  "dangerouslySkipPermissions": true,
+  "model": "Gemini 3.6 Flash (Medium)",
+  "notifications": true,
+  "permissions": {
+    "allow": [
+      "command(*)",
+      "command(cat)",
+      "command(agy)",
+      "command(ls)",
+      "command(ps)",
+      "command(lsof)",
+      "command(git clone)",
+      "command(echo)",
+      "command(cd)",
+      "command(python3*)",
+      "command(python*)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "python3 {HOME}/.antigravity/status.py",
+    "enabled": true
+  }
+}
