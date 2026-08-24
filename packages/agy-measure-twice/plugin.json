@@ -1,0 +1,7 @@
+{
+  "name": "agy-measure-twice",
+  "version": "1.0.0",
+  "description": "Skill plugin guiding pre-automation surveys: search existing codebase utilities and match real trigger events before building custom scripts.",
+  "author": "haiggoh",
+  "license": "MIT"
+}
