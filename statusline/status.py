@@ -146,23 +146,21 @@ def extract_arg(command_line: str, name: str) -> str:
 
 
 def get_all_loopback_ports() -> list[int]:
-    """Return all active listening TCP ports on loopback/localhost."""
+    """Return all active listening TCP ports on loopback/localhost across all OS locales."""
     ports = []
     if IS_WINDOWS:
         try:
             out = subprocess.check_output(["netstat", "-ano", "-p", "tcp"], text=True, timeout=1.5, stderr=subprocess.DEVNULL)
             for line in out.splitlines():
-                if "LISTENING" in line:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        addr = parts[1]
-                        if addr.startswith("127.0.0.1:") or addr.startswith("[::1]:") or addr.startswith("0.0.0.0:"):
-                            try:
-                                p = int(addr.rsplit(":", 1)[-1])
-                                if 1024 < p < 65535 and p not in ports:
-                                    ports.append(p)
-                            except ValueError:
-                                pass
+                # Match loopback IPs where foreign port is 0 (listening) regardless of English/German/etc. state label
+                m = re.search(r"(?:127\.0\.0\.1|\[::1\]|0\.0\.0\.0):(\d+)\s+(?:0\.0\.0\.0|\[::\]|\*):0", line)
+                if m:
+                    try:
+                        p = int(m.group(1))
+                        if 1024 < p < 65535 and p not in ports:
+                            ports.append(p)
+                    except ValueError:
+                        pass
         except Exception:
             pass
     else:
@@ -281,16 +279,17 @@ def get_listening_ports_windows(pid: int) -> list[int]:
     try:
         out = subprocess.check_output(["netstat", "-ano", "-p", "tcp"], text=True, timeout=1.5, stderr=subprocess.DEVNULL)
         for line in out.splitlines():
-            if "LISTENING" in line and str(pid) in line:
+            if str(pid) in line:
                 parts = line.split()
-                if len(parts) >= 5 and parts[-1] == str(pid):
-                    addr = parts[1]
-                    try:
-                        port = int(addr.rsplit(":", 1)[-1])
-                        if port not in ports:
-                            ports.append(port)
-                    except ValueError:
-                        pass
+                if len(parts) >= 4 and parts[-1] == str(pid):
+                    m = re.search(r"[:\.](\d+)$", parts[1])
+                    if m:
+                        try:
+                            port = int(m.group(1))
+                            if 1024 < port < 65535 and port not in ports:
+                                ports.append(port)
+                        except ValueError:
+                            pass
     except Exception:
         pass
     return sorted(ports)
