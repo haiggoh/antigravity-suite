@@ -18,13 +18,13 @@ This workspace contains dedicated Antigravity plugins, rules, skills, and utilit
 └── antigravity-suite/               # Central monorepo suite & sync engine
     ├── bin/                         # Sync engine (sync_engine.py)
     ├── packages/                    # Dedicated Antigravity packages & plugins (agy-*)
+    │   ├── agy-statusline/          # Live telemetry & quota status line
     │   ├── agy-measure-twice/       # Pre-execution inspection skill
     │   ├── agy-no-hidden-changes/   # Transparent code modification rule
     │   └── agy-waypoints/           # Lifecycle hook & banner plugin
     ├── rules/                       # Global rules (synced to ~/.gemini/config/rules/)
     │   └── user_global.md
-    ├── statusline/                  # Telemetry & statusline scripts
-    ├── templates/                   # Shared settings template
+    ├── templates/                   # Shared settings & workspace templates
     ├── install.py                   # Setup & workspace synchronizer
     └── push.ps1 / push.bat          # Quick commit & push utilities
 ```

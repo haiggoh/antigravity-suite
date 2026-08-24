@@ -76,11 +76,11 @@ TIP_CACHE_FILE = os.environ.get(
 TIP_MIN_SECONDS = 3.0   # minimum seconds before rotating to the next tip
 QUOTA_CACHE_FILE = os.environ.get(
     "AGY_QUOTA_CACHE",
-    os.path.expanduser("~/.antigravity/quota-cache.json"),
+    os.path.expanduser("~/.gemini/cache/statusline/quota-cache.json"),
 )
 STATUS_STATE_FILE = os.environ.get(
     "AGY_STATUS_STATE",
-    os.path.expanduser("~/.antigravity/status-state.json"),
+    os.path.expanduser("~/.gemini/cache/statusline/status-state.json"),
 )
 QUOTA_MAX_AGE_SECONDS = float(os.environ.get("AGY_QUOTA_MAX_AGE_SECONDS", "900"))
 QUOTA_REFRESH_INTERVAL_SECONDS = float(os.environ.get("AGY_QUOTA_REFRESH_INTERVAL_SECONDS", "30"))

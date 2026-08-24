@@ -26,7 +26,7 @@ This document evaluates sync transport mechanisms for synchronizing Google Antig
 * Your Windows PC (running `brantsch.h@gmail.com`) automatically pulls and applies these updates the next time you turn it on—**no requirement for both machines to be online or connected to the same WiFi network simultaneously**.
 
 ### Multi-Account & Multi-OS Isolation
-* **OS Path Normalization**: macOS paths (`~/.antigravity/status.py`) and Windows paths (`%USERPROFILE%\.antigravity\status.py`) are expanded dynamically by the sync engine.
+* **OS Path Normalization**: macOS paths (`~/.gemini/statusline/status.py`) and Windows paths (`%USERPROFILE%\.gemini\statusline\status.py`) are expanded dynamically by the sync engine.
 * **Account Isolation**: Machine-local keys (such as active Google login tokens, `email`, and `trustedWorkspaces`) are preserved locally and explicitly excluded from synced templates.
 
 ---

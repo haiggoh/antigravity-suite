@@ -93,7 +93,7 @@ def backup_file(path: str) -> str:
     if not os.path.isfile(path):
         return ""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_dir = os.path.join(get_home_dir(), ".antigravity", "backups")
+    backup_dir = os.path.join(get_home_dir(), ".gemini", "backups")
     os.makedirs(backup_dir, exist_ok=True)
     filename = os.path.basename(path)
     backup_path = os.path.join(backup_dir, f"{filename}.{timestamp}.bak")
@@ -197,10 +197,10 @@ def sync_rules(rules_dir: str, dry_run: bool = False) -> None:
 
 
 def sync_statusline(statusline_dir: str, dry_run: bool = False) -> None:
-    """Sync status line scripts to ~/.antigravity/."""
+    """Sync status line scripts to ~/.gemini/statusline/."""
     if not os.path.isdir(statusline_dir):
         return
-    dest_dir = os.path.join(get_home_dir(), ".antigravity")
+    dest_dir = os.path.join(get_home_dir(), ".gemini", "statusline")
     if not dry_run:
         os.makedirs(dest_dir, exist_ok=True)
 
@@ -218,6 +218,33 @@ def sync_statusline(statusline_dir: str, dry_run: bool = False) -> None:
                     except Exception:
                         pass
                 print(f"[+] Synced statusline script: {item} -> {dest_file}")
+
+
+def cleanup_legacy_antigravity_dir(dry_run: bool = False) -> None:
+    """Migrate legacy ~/.antigravity backups/cache into ~/.gemini and remove ~/.antigravity."""
+    legacy_dir = os.path.join(get_home_dir(), ".antigravity")
+    if not os.path.isdir(legacy_dir):
+        return
+    if dry_run:
+        print(f"[*] [dry-run] Would clean up legacy directory: {legacy_dir}")
+        return
+    try:
+        legacy_backups = os.path.join(legacy_dir, "backups")
+        new_backups = os.path.join(get_home_dir(), ".gemini", "backups")
+        if os.path.isdir(legacy_backups):
+            os.makedirs(new_backups, exist_ok=True)
+            for f in os.listdir(legacy_backups):
+                src = os.path.join(legacy_backups, f)
+                dst = os.path.join(new_backups, f)
+                if not os.path.exists(dst):
+                    try:
+                        shutil.move(src, dst)
+                    except Exception:
+                        pass
+        shutil.rmtree(legacy_dir, ignore_errors=True)
+        print(f"[+] Cleaned up legacy directory: {legacy_dir}")
+    except Exception:
+        pass
 
 
 def sync_workspace_root(workspace_root: str, repo_root: str, dry_run: bool = False) -> None:
@@ -415,9 +442,14 @@ def main():
         default=os.path.join(repo_root, "rules"),
         help="Path to shared rules directory",
     )
+    default_statusline = (
+        os.path.join(repo_root, "packages", "agy-statusline")
+        if os.path.isdir(os.path.join(repo_root, "packages", "agy-statusline"))
+        else os.path.join(repo_root, "statusline")
+    )
     parser.add_argument(
         "--statusline-dir",
-        default=os.path.join(repo_root, "statusline"),
+        default=default_statusline,
         help="Path to statusline scripts directory",
     )
     parser.add_argument(
@@ -452,6 +484,7 @@ def main():
     sync_rules(rules_path, dry_run=args.dry_run)
     sync_statusline(statusline_path, dry_run=args.dry_run)
     sync_workspace_root(os.path.abspath(args.workspace_dir), repo_root, dry_run=args.dry_run)
+    cleanup_legacy_antigravity_dir(dry_run=args.dry_run)
     
     sys.exit(0 if success else 1)
 

@@ -1,0 +1,11 @@
+{
+  "name": "agy-statusline",
+  "version": "1.1.0",
+  "description": "Cross-platform Antigravity status line with live quota tracking, token telemetry, context metering, and multi-language Windows support.",
+  "author": "haiggoh",
+  "license": "MIT",
+  "upstream": {
+    "repository": "https://github.com/60ke/antigravity-statusline.git",
+    "description": "Forked and layered with Windows/macOS cross-platform adaptations, direct loopback quota scanner, and ~/.gemini cache integration."
+  }
+}

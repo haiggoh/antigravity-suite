@@ -7,7 +7,7 @@ import sys
 
 def main():
     print("Antigravity Sync - Uninstaller")
-    print("To restore a previous backup, check files in ~/.antigravity/backups/")
+    print("To restore a previous backup, check files in ~/.gemini/backups/")
 
 
 if __name__ == "__main__":

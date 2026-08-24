@@ -56,13 +56,16 @@ antigravity-suite/
 ├── uninstall.py                # Uninstaller
 ├── bin/
 │   └── sync_engine.py          # Core sync engine, migration & workspace sync
-├── packages/                   # Monorepo packages & tool ports
-├── statusline/
-│   ├── status.py               # Cross-platform live telemetry status line
-│   └── agy-quota-cache.py      # /usage quota parser & cache
+├── packages/                   # Monorepo packages & plugins (agy-*)
+│   ├── agy-statusline/         # Cross-platform live telemetry & quota status line
+│   ├── agy-measure-twice/      # Pre-execution inspection skill
+│   ├── agy-no-hidden-changes/  # Transparent code modification rule
+│   └── agy-waypoints/          # Lifecycle hook & banner plugin
 ├── templates/
-│   └── shared-settings.json    # Shared settings template ({HOME} placeholders)
-├── rules/                      # Synced global rules
+│   ├── shared-settings.json    # Shared settings template ({HOME} placeholders)
+│   ├── workspace-GEMINI.md     # Workspace root guidelines template
+│   └── agents/                 # Workspace-level agent configuration (.agents/)
+├── rules/                      # Synced global rules (~/.gemini/config/rules/)
 ├── skills/
 │   ├── antigravity-sync/       # Companion Antigravity sync skill
 │   └── local-delegate/         # Local MLX model delegation skill

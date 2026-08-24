@@ -23,7 +23,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "python3 {HOME}/.antigravity/status.py",
+    "command": "python3 {HOME}/.gemini/statusline/status.py",
     "enabled": true
   }
 }

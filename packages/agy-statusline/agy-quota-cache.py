@@ -24,11 +24,11 @@ if sys.platform == "win32":
 
 CACHE_FILE = os.environ.get(
     "AGY_QUOTA_CACHE",
-    os.path.expanduser("~/.antigravity/quota-cache.json"),
+    os.path.expanduser("~/.gemini/cache/statusline/quota-cache.json"),
 )
 STATUS_STATE_FILE = os.environ.get(
     "AGY_STATUS_STATE",
-    os.path.expanduser("~/.antigravity/status-state.json"),
+    os.path.expanduser("~/.gemini/cache/statusline/status-state.json"),
 )
 
 
