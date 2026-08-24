@@ -14,6 +14,14 @@ import platform
 import argparse
 from datetime import datetime
 
+# Ensure stdout and stderr handle utf-8 safely across platforms (e.g. Windows cp1252)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Keys that must remain local to each individual machine/account
 LOCAL_EXCLUSIVE_KEYS = {
     "trustedWorkspaces",
@@ -145,7 +153,7 @@ def sync_local_config(template_path: str, dry_run: bool = False) -> bool:
         f.write("\n")
     os.replace(tmp_path, cli_path)
 
-    print(f"[✓] Successfully synced configuration to {cli_path}")
+    print(f"[+] Successfully synced configuration to {cli_path}")
 
     # Also check if Desktop / IDE config exists and mirror non-exclusive settings
     desktop_path = get_desktop_config_path()
@@ -161,7 +169,7 @@ def sync_local_config(template_path: str, dry_run: bool = False) -> bool:
                     json.dump(desktop_merged, f, ensure_ascii=False, indent=2)
                     f.write("\n")
                 os.replace(dtmp, desktop_path)
-                print(f"[✓] Successfully mirrored configuration to Desktop app: {desktop_path}")
+                print(f"[+] Successfully mirrored configuration to Desktop app: {desktop_path}")
         except Exception as e:
             print(f"[!] Desktop sync skipped: {e}")
 
@@ -184,7 +192,7 @@ def sync_rules(rules_dir: str, dry_run: bool = False) -> None:
                 print(f"[*] [dry-run] Would sync rule file: {item} -> {dest_file}")
             else:
                 shutil.copy2(src_file, dest_file)
-                print(f"[✓] Synced rule file: {item} -> {dest_file}")
+                print(f"[+] Synced rule file: {item} -> {dest_file}")
 
 
 def main():

@@ -17,10 +17,10 @@ Use this skill to delegate bulk tasks, file summaries, code reviews, or reasonin
 
 ## How to Delegate Work
 
-Run the `agy-dispatch.py` bridge tool via shell execution:
+Run the `local-agent-dispatch.py` (or `local-agent`) bridge tool via shell execution:
 
 ```bash
-python3 /Users/bra0002h/ClaudeWorkspace/local-agents/bin/agy-dispatch.py --model qwen-3.6-operator --prompt "Analyze the provided file" --files path/to/file.txt
+python3 /Users/bra0002h/ClaudeWorkspace/local-agents/bin/local-agent-dispatch.py --model qwen-3.6-operator --prompt "Analyze the provided file" --files path/to/file.txt
 ```
 
 ### Options:

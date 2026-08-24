@@ -10,6 +10,14 @@ import sys
 import subprocess
 import argparse
 
+# Ensure stdout and stderr handle utf-8 safely across platforms (e.g. Windows cp1252)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ENGINE_PATH = os.path.join(SCRIPT_DIR, "bin", "sync_engine.py")
 TEMPLATE_PATH = os.path.join(SCRIPT_DIR, "templates", "shared-settings.json")
@@ -36,9 +44,10 @@ def main():
     res = subprocess.run(cmd)
     
     if res.returncode == 0:
-        print("\n[✓] Setup complete!")
+        py_cmd = "python" if sys.platform == "win32" else "python3"
+        print("\n[+] Setup complete!")
         print("To sync your settings at any time, run:")
-        print(f"  python3 {ENGINE_PATH}")
+        print(f"  {py_cmd} {ENGINE_PATH}")
     else:
         print("\n[-] Sync encountered an issue. See output above.")
         sys.exit(res.returncode)
