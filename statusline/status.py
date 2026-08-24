@@ -86,6 +86,9 @@ QUOTA_MAX_AGE_SECONDS = float(os.environ.get("AGY_QUOTA_MAX_AGE_SECONDS", "900")
 QUOTA_REFRESH_INTERVAL_SECONDS = float(os.environ.get("AGY_QUOTA_REFRESH_INTERVAL_SECONDS", "30"))
 USER_STATUS_PATH = "/exa.language_server_pb.LanguageServerService/GetUserStatus"
 
+# Cached working endpoint: (port, csrf_token, use_https)
+_CACHED_SERVER_ENDPOINT = None
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def format_tokens(n: int) -> str:
     if n >= 1_000_000:
@@ -142,6 +145,38 @@ def extract_arg(command_line: str, name: str) -> str:
     return match.group(1).strip("\"'")
 
 
+def get_all_loopback_ports() -> list[int]:
+    """Return all active listening TCP ports on loopback/localhost."""
+    ports = []
+    if IS_WINDOWS:
+        try:
+            out = subprocess.check_output(["netstat", "-ano", "-p", "tcp"], text=True, timeout=1.5, stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                if "LISTENING" in line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        addr = parts[1]
+                        if addr.startswith("127.0.0.1:") or addr.startswith("[::1]:") or addr.startswith("0.0.0.0:"):
+                            try:
+                                p = int(addr.rsplit(":", 1)[-1])
+                                if 1024 < p < 65535 and p not in ports:
+                                    ports.append(p)
+                            except ValueError:
+                                pass
+        except Exception:
+            pass
+    else:
+        try:
+            out = subprocess.check_output(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], text=True, timeout=1.5, stderr=subprocess.DEVNULL)
+            for match in re.finditer(r":(\d+)\s+\(LISTEN\)", out):
+                p = int(match.group(1))
+                if 1024 < p < 65535 and p not in ports:
+                    ports.append(p)
+        except Exception:
+            pass
+    return ports
+
+
 def find_server_candidates() -> list[dict]:
     if IS_WINDOWS:
         return find_server_candidates_windows()
@@ -191,41 +226,26 @@ def find_server_candidates_unix() -> list[dict]:
 def find_server_candidates_windows() -> list[dict]:
     candidates = []
     try:
-        cmd = [
-            "powershell",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'agy|language_server' } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress",
-        ]
-        out = subprocess.check_output(cmd, text=True, timeout=2.5, stderr=subprocess.DEVNULL)
-        if not out.strip():
-            return []
-        items = json.loads(out)
-        if isinstance(items, dict):
-            items = [items]
-        for item in items:
-            pid = item.get("ProcessId")
-            cmdline = item.get("CommandLine") or ""
-            if not pid or not cmdline:
+        # Fast tasklist to find PID of agy / language_server processes
+        out = subprocess.check_output(["tasklist", "/FO", "CSV", "/NH"], text=True, timeout=1.5, stderr=subprocess.DEVNULL)
+        for line in out.splitlines():
+            line = line.strip().strip('"')
+            if not line:
                 continue
-            lower = cmdline.lower()
-            is_cli = "agy" in lower
-            is_ls = "language_server" in lower
-            token = extract_arg(cmdline, "--csrf_token")
-            score = 10
-            if is_cli:
-                score += 40
-            if is_ls:
-                score += 20
-            if token:
-                score += 10
-            candidates.append({
-                "pid": int(pid),
-                "csrf_token": token,
-                "score": score,
-                "kind": "cli" if is_cli else "language_server",
-            })
+            parts = [p.strip().strip('"') for p in line.split('","')]
+            if len(parts) >= 2:
+                name = parts[0].lower()
+                if "agy" in name or "language_server" in name or "antigravity" in name:
+                    try:
+                        pid = int(parts[1])
+                        candidates.append({
+                            "pid": pid,
+                            "csrf_token": "",
+                            "score": 40 if "agy" in name else 20,
+                            "kind": "cli" if "agy" in name else "language_server",
+                        })
+                    except ValueError:
+                        pass
     except Exception:
         pass
     return sorted(candidates, key=lambda x: x["score"], reverse=True)
@@ -259,21 +279,24 @@ def get_listening_ports_unix(pid: int) -> list[int]:
 def get_listening_ports_windows(pid: int) -> list[int]:
     ports = []
     try:
-        out = subprocess.check_output(["netstat", "-ano", "-p", "tcp"], text=True, timeout=2.0, stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(["netstat", "-ano", "-p", "tcp"], text=True, timeout=1.5, stderr=subprocess.DEVNULL)
         for line in out.splitlines():
             if "LISTENING" in line and str(pid) in line:
                 parts = line.split()
                 if len(parts) >= 5 and parts[-1] == str(pid):
                     addr = parts[1]
-                    port = int(addr.rsplit(":", 1)[-1])
-                    if port not in ports:
-                        ports.append(port)
+                    try:
+                        port = int(addr.rsplit(":", 1)[-1])
+                        if port not in ports:
+                            ports.append(port)
+                    except ValueError:
+                        pass
     except Exception:
         pass
     return sorted(ports)
 
 
-def request_user_status(port: int, csrf_token: str, use_https: bool) -> dict:
+def request_user_status(port: int, csrf_token: str, use_https: bool, timeout: float = 0.3) -> dict:
     body = json.dumps({
         "metadata": {
             "ideName": "antigravity",
@@ -292,11 +315,11 @@ def request_user_status(port: int, csrf_token: str, use_https: bool) -> dict:
         conn = http.client.HTTPSConnection(
             "127.0.0.1",
             port,
-            timeout=2,
+            timeout=timeout,
             context=ssl._create_unverified_context(),
         )
     else:
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     conn.request("POST", USER_STATUS_PATH, body, headers)
     res = conn.getresponse()
     raw = res.read().decode("utf-8", "replace")
@@ -341,32 +364,55 @@ def parse_user_status_quota(response: dict) -> dict:
 
 
 def fetch_live_quota_cache(expected_email: str = "") -> dict:
-    fallback = {}
+    global _CACHED_SERVER_ENDPOINT
     expected = (expected_email or "").lower()
 
-    for process_info in find_server_candidates():
+    # 1. Try cached endpoint first (1ms fast path)
+    if _CACHED_SERVER_ENDPOINT:
+        c_port, c_token, c_https = _CACHED_SERVER_ENDPOINT
+        try:
+            resp = request_user_status(c_port, c_token, c_https, timeout=0.4)
+            cache = parse_user_status_quota(resp)
+            if cache.get("models"):
+                cache["source_process"] = "cached"
+                cache["source_port"] = c_port
+                return cache
+        except Exception:
+            _CACHED_SERVER_ENDPOINT = None
+
+    # 2. Try detected candidate processes
+    candidates = find_server_candidates()
+    for process_info in candidates:
         ports = get_listening_ports(process_info["pid"])
         for port in ports:
             for use_https in (True, False):
                 try:
-                    response = request_user_status(
-                        port,
-                        process_info.get("csrf_token", ""),
-                        use_https,
-                    )
-                    cache = parse_user_status_quota(response)
-                    if not cache.get("models"):
-                        continue
-                    cache["source_process"] = process_info.get("kind", "")
-                    cache["source_port"] = port
-                    email = str(cache.get("scope", {}).get("email", "")).lower()
-                    if expected and email == expected:
+                    resp = request_user_status(port, process_info.get("csrf_token", ""), use_https, timeout=0.25)
+                    cache = parse_user_status_quota(resp)
+                    if cache.get("models"):
+                        _CACHED_SERVER_ENDPOINT = (port, process_info.get("csrf_token", ""), use_https)
+                        cache["source_process"] = process_info.get("kind", "")
+                        cache["source_port"] = port
                         return cache
-                    if not fallback:
-                        fallback = cache
                 except Exception:
                     continue
-    return fallback
+
+    # 3. Direct loopback port scan (instant fallback across all platforms)
+    all_ports = get_all_loopback_ports()
+    for port in all_ports:
+        for use_https in (True, False):
+            try:
+                resp = request_user_status(port, "", use_https, timeout=0.15)
+                cache = parse_user_status_quota(resp)
+                if cache.get("models"):
+                    _CACHED_SERVER_ENDPOINT = (port, "", use_https)
+                    cache["source_process"] = "loopback_scan"
+                    cache["source_port"] = port
+                    return cache
+            except Exception:
+                continue
+
+    return {}
 
 
 def read_json_file(path: str) -> dict:
@@ -417,7 +463,7 @@ def scope_mismatch(cache: dict, data: dict) -> str:
     expected = quota_scope(data)
     actual = cache.get("scope", {})
     if not isinstance(actual, dict):
-        return "scope"
+        return ""
 
     expected_email = (expected.get("email") or "").lower()
     actual_email = (actual.get("email") or "").lower()
@@ -427,7 +473,7 @@ def scope_mismatch(cache: dict, data: dict) -> str:
 
 
 def should_refresh_quota(data: dict, cache: dict) -> bool:
-    if not cache:
+    if not cache or not cache.get("models"):
         return True
     now = time.time()
     ts = float(cache.get("timestamp", 0) or 0)
@@ -446,7 +492,7 @@ def refresh_quota_if_needed(data: dict) -> dict:
     cache = read_json_file(QUOTA_CACHE_FILE)
     if should_refresh_quota(data, cache):
         live_cache = fetch_live_quota_cache(data.get("email") or "")
-        if live_cache:
+        if live_cache and live_cache.get("models"):
             cache = live_cache
             write_quota_cache(cache)
     return cache
@@ -466,18 +512,28 @@ def load_quota_for_model(model_name: str, data: dict) -> dict:
         return {"stale": True, "reason": "age"}
 
     models = cache.get("models", {})
-    if not isinstance(models, dict):
+    if not isinstance(models, dict) or not models:
         return {}
 
     wanted = normalize_model_name(model_name)
     if wanted in models:
         return models[wanted]
 
+    # Partial match
     for key, value in models.items():
         key_norm = normalize_model_name(key)
         if key_norm and (key_norm in wanted or wanted in key_norm):
             return value
-    return {}
+
+    # Family match (e.g. gemini-3.7 -> gemini37flashhigh)
+    for key, value in models.items():
+        if "gemini" in wanted and "gemini" in key:
+            return value
+        if "claude" in wanted and "claude" in key:
+            return value
+
+    # Default to first model
+    return next(iter(models.values())) if models else {}
 
 
 def get_tip(force_rotate=False) -> str:
