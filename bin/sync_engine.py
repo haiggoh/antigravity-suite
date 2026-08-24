@@ -220,6 +220,40 @@ def sync_statusline(statusline_dir: str, dry_run: bool = False) -> None:
                 print(f"[+] Synced statusline script: {item} -> {dest_file}")
 
 
+def sync_workspace_root(workspace_root: str, repo_root: str, dry_run: bool = False) -> None:
+    """Sync workspace-level GEMINI.md and .agents configuration to the parent workspace directory."""
+    if not os.path.isdir(workspace_root):
+        return
+
+    # 1. Sync workspace GEMINI.md
+    gemini_template = os.path.join(repo_root, "templates", "workspace-GEMINI.md")
+    if os.path.isfile(gemini_template):
+        dest_gemini = os.path.join(workspace_root, "GEMINI.md")
+        if dry_run:
+            print(f"[*] [dry-run] Would sync workspace guidelines: {dest_gemini}")
+        else:
+            shutil.copy2(gemini_template, dest_gemini)
+            print(f"[+] Synced workspace guidelines: GEMINI.md -> {dest_gemini}")
+
+    # 2. Sync workspace .agents hooks/scripts
+    agents_template_dir = os.path.join(repo_root, "templates", "agents")
+    if os.path.isdir(agents_template_dir):
+        dest_agents = os.path.join(workspace_root, ".agents")
+        if dry_run:
+            print(f"[*] [dry-run] Would sync workspace agent configuration -> {dest_agents}")
+        else:
+            os.makedirs(dest_agents, exist_ok=True)
+            for root, dirs, files in os.walk(agents_template_dir):
+                rel = os.path.relpath(root, agents_template_dir)
+                target_root = os.path.join(dest_agents, rel) if rel != "." else dest_agents
+                os.makedirs(target_root, exist_ok=True)
+                for f in files:
+                    src_f = os.path.join(root, f)
+                    dst_f = os.path.join(target_root, f)
+                    shutil.copy2(src_f, dst_f)
+            print(f"[+] Synced workspace agent configuration (.agents/) -> {dest_agents}")
+
+
 def setup_git_autostash() -> None:
     """Ensure git pull.rebase and rebase.autoStash are safely enabled globally."""
     try:
@@ -417,6 +451,7 @@ def main():
     success = sync_local_config(template_path, dry_run=args.dry_run)
     sync_rules(rules_path, dry_run=args.dry_run)
     sync_statusline(statusline_path, dry_run=args.dry_run)
+    sync_workspace_root(os.path.abspath(args.workspace_dir), repo_root, dry_run=args.dry_run)
     
     sys.exit(0 if success else 1)
 

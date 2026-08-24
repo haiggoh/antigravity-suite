@@ -1,0 +1,15 @@
+{
+  "auto-approve-workspace": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command|write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python auto_approve.py"
+          }
+        ]
+      }
+    ]
+  }
+}
