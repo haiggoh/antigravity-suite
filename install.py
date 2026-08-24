@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""Antigravity Sync - Installer
+"""Antigravity Suite - Installer & Synchronizer
 
-Sets up antigravity-sync on your local machine (macOS, Windows, or Linux).
-Preserves existing host credentials and local settings while merging shared configuration.
+Sets up antigravity-suite on your local machine (macOS, Windows, or Linux).
+On every run:
+  1. Pulls the latest commits from GitHub (safe autostash, no dirty-tree loss)
+  2. Syncs shared config, rules, and statusline scripts to local AGY directories
+
+Flags:
+  --no-workspace-sync   Skip the automatic git pull step
+  --migrate             Migrate legacy projects/ folder and GEMINI.md into suite
+  --dry-run             Preview all changes without writing anything
 """
 
 import os
@@ -26,7 +33,7 @@ TEMPLATE_PATH = os.path.join(SCRIPT_DIR, "templates", "shared-settings.json")
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Suite - Installer & Synchronizer")
     parser.add_argument("--dry-run", action="store_true", help="Preview installation without modifying files")
-    parser.add_argument("--workspace-sync", action="store_true", help="Perform safe multi-repo workspace git pull --rebase --autostash")
+    parser.add_argument("--no-workspace-sync", action="store_true", help="Skip the automatic git pull --rebase --autostash step")
     parser.add_argument("--migrate", action="store_true", help="Migrate legacy projects folder and GEMINI.md into suite structure")
     args = parser.parse_args()
 
@@ -41,19 +48,19 @@ def main():
     cmd = [sys.executable, ENGINE_PATH, "--template", TEMPLATE_PATH]
     if args.dry_run:
         cmd.append("--dry-run")
-    if args.workspace_sync:
+    if not args.no_workspace_sync:
         cmd.append("--workspace-sync")
     if args.migrate:
         cmd.append("--migrate")
 
     print("[*] Running synchronization...")
     res = subprocess.run(cmd)
-    
+
     if res.returncode == 0:
         py_cmd = "python" if sys.platform == "win32" else "python3"
         print("\n[+] Setup complete!")
         print("To sync your settings at any time, run:")
-        print(f"  {py_cmd} {ENGINE_PATH}")
+        print(f"  {py_cmd} install.py")
     else:
         print("\n[-] Sync encountered an issue. See output above.")
         sys.exit(res.returncode)
