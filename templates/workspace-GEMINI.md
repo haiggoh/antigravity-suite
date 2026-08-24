@@ -8,7 +8,7 @@ This workspace contains dedicated Antigravity plugins, rules, skills, and utilit
 ## Workspace Structure
 
 ```text
-<workspace_root>/                    # e.g., D:\antigravity (Windows) or ~/antigravity (macOS)
+<workspace_root>/                    # e.g., D:\antigravity (Windows) or ~/AntigravityWorkspace (macOS)
 ├── GEMINI.md                        # Root workspace guidelines & coding rules
 ├── .agents/                         # Workspace-level agent customizations
 │   ├── hooks.json                   # Workspace lifecycle hooks
