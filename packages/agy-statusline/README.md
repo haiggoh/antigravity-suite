@@ -1,33 +1,93 @@
-# agy-statusline
+# Antigravity Status Line (`agy-statusline`)
 
-A high-performance, cross-platform telemetry and live quota status line for **Google Antigravity (AGY)** on macOS and Windows.
+A high-performance, real-time telemetry and live quota status line for **Google Antigravity CLI (`agy`)** on **macOS, Windows, and Linux**.
 
----
-
-## Origin & Upstream Architecture
-
-* **Upstream Base**: Forked from [`60ke/antigravity-statusline`](https://github.com/60ke/antigravity-statusline.git).
-* **Suite Enhancements & Custom Layers**:
-  1. **Cross-Platform Compatibility**: Full support for Windows PowerShell, Windows Terminal, and macOS/Linux shells.
-  2. **Encoding & Language Support**: Native UTF-8 reconfigure with support for non-English Windows netstat output (e.g. `ABHÖREN` on German Windows).
-  3. **Direct Loopback Fast Scanner**: Sub-millisecond direct port scanner to discover the active local language server without shell piping overhead.
-  4. **Standard Cache Path**: Cache and state files stored in `~/.gemini/cache/statusline/` instead of polluting the home root with `~/.antigravity/`.
-  5. **Live Quota & Rotating Tips**: Real-time quota percentage meter, session token tracking, and non-blocking tips display.
+```text
+Gemini 3.7 Flash │ Idle │ Context 98% left │ ~/project │ ⬡ Quota: 85% · reset 4d 12h │ ↑1.2k ↓4.8k 6.0k tok
+  💡 Tip: Use /goal for complex, multi-step tasks that need deep focus.
+```
 
 ---
 
-## Integration
+## ✨ Key Features & Upstream Differences
 
-Configured in `~/.gemini/antigravity-cli/settings.json`:
+Forked and enhanced from [`60ke/antigravity-statusline`](https://github.com/60ke/antigravity-statusline.git) with major cross-platform and performance upgrades:
+
+| Feature | Original Upstream (`60ke`) | This Fork (`haiggoh`) |
+| :--- | :--- | :--- |
+| **Windows Support** | ❌ Broken / Unix-only | ✅ Full Windows PowerShell & Windows Terminal support |
+| **Windows Locales** | ❌ Fails on non-English `netstat` | ✅ Supports international Windows output (e.g. `ABHÖREN` on German Windows) |
+| **Port Discovery** | ⚠️ Slow shell `lsof`/`netstat` pipes | ✅ **Sub-millisecond direct loopback port scan** |
+| **Storage Standard** | ⚠️ Pollutes `~/.antigravity/` | ✅ Clean standard paths: `~/.gemini/statusline` & `~/.gemini/cache/` |
+| **Windows Installer** | ❌ None | ✅ Native PowerShell installer (`install.ps1`) |
+| **Context & Quota Meter** | ✅ Basic | ✅ High-accuracy live model quota with reset countdown & token telemetry |
+| **Tips Engine** | ❌ None | ✅ Smart rotating productivity tips (non-blocking, persisted cache) |
+
+---
+
+## 🚀 Quick Install
+
+### macOS / Linux (Bash)
+
+```bash
+git clone https://github.com/haiggoh/antigravity-statusline.git ~/.gemini/statusline-repo
+cd ~/.gemini/statusline-repo
+./install.sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/haiggoh/antigravity-statusline.git "$HOME\.gemini\statusline-repo"
+cd "$HOME\.gemini\statusline-repo"
+.\install.ps1
+```
+
+---
+
+## ⚙️ Manual Configuration
+
+Add or edit the `statusLine` block in your Antigravity CLI settings:
+
+* **macOS / Linux**: `~/.gemini/antigravity-cli/settings.json`
+* **Windows**: `%USERPROFILE%\.gemini\antigravity-cli\settings.json`
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "python3 {HOME}/.gemini/statusline/status.py",
+    "command": "python3 /path/to/.gemini/statusline/status.py",
     "enabled": true
   }
 }
 ```
 
-*(Automatically adapted to `python` on Windows by `antigravity-suite` sync engine).*
+*(On Windows, replace `python3` with `python`).*
+
+---
+
+## 📁 File Structure
+
+```text
+~/.gemini/
+├── statusline/
+│   ├── status.py               # Main status line renderer & loopback probe
+│   └── agy-quota-cache.py      # /usage quota parser & cache updater
+├── cache/
+│   └── statusline/
+│       ├── quota-cache.json    # Cached quota telemetry
+│       └── status-state.json   # Session state cache
+└── backups/                    # Automatic settings backups before changes
+```
+
+---
+
+## 🤝 Upstream Collaboration
+
+This fork maintains 100% upstream compatibility. Changes are structured into modular pull requests for upstream merge into `60ke/antigravity-statusline`.
+
+---
+
+## 📄 License
+
+MIT © [Heiko Brantsch](https://github.com/haiggoh) & [60ke](https://github.com/60ke)

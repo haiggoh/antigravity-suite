@@ -1,0 +1,8 @@
+{
+  "name": "agy-sync",
+  "version": "1.0.0",
+  "description": "Universal cross-platform synchronization engine and multi-repository workspace manager for Google Antigravity on macOS, Windows, and Linux.",
+  "author": "haiggoh",
+  "license": "MIT",
+  "skills": ["skills/antigravity-sync"]
+}
