@@ -1,6 +1,7 @@
 # Antigravity Suite - Quick Commit & Push (PowerShell)
 param (
-    [string]$Message = "feat: update antigravity-suite packages and rules"
+    [string]$Message = "feat: update antigravity-suite packages and rules",
+    [switch]$SyncStandalone
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,4 +22,9 @@ if (-not $status) {
 
 Write-Host "[*] Pushing to origin main..." -ForegroundColor Green
 git push origin main
-Write-Host "[+] Push complete!" -ForegroundColor Green
+Write-Host "[+] Suite push complete!" -ForegroundColor Green
+
+if ($SyncStandalone) {
+    Write-Host "`n[*] Synchronizing standalone package repositories..." -ForegroundColor Cyan
+    python (Join-Path $PSScriptRoot "bin\sync_standalone_fork.py") --all -m $Message
+}
