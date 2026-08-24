@@ -1,18 +1,19 @@
-# antigravity-sync
+# antigravity-suite
 
-Keep your **Google Antigravity** configuration, status line scripts, skills, rules, and tool permissions seamlessly in sync across **macOS and Windows** devices, as well as between local **CLI** and **Desktop / IDE** environments.
+A comprehensive power-user suite and synchronization toolkit for **Google Antigravity (AGY)** across **macOS and Windows**.
 
-Modifying a shared setting, status line script, or tool permission on one machine mirrors cleanly to all your devices via a git/cloud repository template—**without clobbering machine-local account credentials, session tokens, or host paths**.
+Synchronizes configuration, status line telemetry, custom skills, rules, and tool permissions seamlessly between devices and local environments, with built-in multi-repository workspace synchronization and conflict-free autostash.
 
 ---
 
 ## Key Features
 
-* 🔄 **Cross-OS Compatibility (macOS & Windows)**: Automatically normalizes path separators and executable commands (e.g. `python3` on macOS vs `python` on Windows, expanding `{HOME}` dynamically).
-* 👤 **Account & Workspace Isolation**: Machine-local variables (such as active Google login email `heiko.brantsch@seven.one` vs `brantsch.h@gmail.com`, session tokens, and `trustedWorkspaces`) remain isolated to each host.
-* 🖥️ **Cross-App Local Sync**: Mirrored after `claude-code-desktop-sync`, automatically synchronizes configuration between local CLI and Desktop / IDE app configurations on the same machine.
-* 🔒 **Secure Asynchronous Sync (Git / Cloud)**: Uses Git (e.g. GitHub private repo) or cloud folder synchronization. Devices sync asynchronously whenever booted without requiring open ports or simultaneous local WiFi connectivity.
-* 🛡️ **Non-Destructive & Backed Up**: Automatically creates timestamped backups in `~/.antigravity/backups/` before applying modifications.
+* 🔄 **Cross-OS Compatibility (macOS & Windows)**: Automatically normalizes path separators, executables (`python3` vs `python`), and console codepages.
+* 👤 **Account & Workspace Isolation**: Machine-local variables (such as active Google login email, session tokens, and `trustedWorkspaces`) remain isolated to each host.
+* 📊 **Real-time Status Line**: Displays active model, agent state, context meter, working directory, live Google model quota with reset countdown, token telemetry, and rotating tips.
+* 🛡️ **Workspace Sync with Auto-Stash**: One-command safe synchronization across all repositories in your workspace with automatic stashing of uncommitted edits (`--workspace-sync`).
+* 🖥️ **Cross-App Local Sync**: Automatically synchronizes configuration between local CLI and Desktop / IDE app configurations on the same machine.
+* 🔒 **Secure Asynchronous Transport**: Uses private Git repositories for zero-open-port, asynchronous synchronization across devices.
 
 ---
 
@@ -21,44 +22,56 @@ Modifying a shared setting, status line script, or tool permission on one machin
 ### 1. Install & Sync
 
 ```bash
+# macOS / Linux:
 python3 install.py
+
+# Windows (PowerShell):
+python install.py
 ```
 
-### 2. Dry Run Preview
+### 2. Workspace Multi-Repo Sync
 
-To test what changes would be applied without modifying any files:
+Safely pull updates across all git repositories in your workspace without losing dirty uncommitted work:
 
 ```bash
-python3 install.py --dry-run
+python install.py --workspace-sync
 ```
 
----
+### 3. Automated Workspace Migration
 
-## Architecture & Transport Analysis
+Migrate legacy project folders or root `GEMINI.md` into the suite structure:
 
-See [`docs/SYNC-ARCHITECTURE.md`](docs/SYNC-ARCHITECTURE.md) for a detailed security, network transport, and threat model breakdown comparing Git/Cloud remote vs. local WiFi / P2P vs. SSH VPN tunnels.
+```bash
+python install.py --migrate
+```
 
 ---
 
 ## Project Structure
 
-```
-antigravity-sync/
+```text
+antigravity-suite/
 ├── README.md
-├── install.py                  # Standalone cross-platform installer
+├── install.py                  # Standalone cross-platform installer & synchronizer
 ├── uninstall.py                # Uninstaller
 ├── bin/
-│   └── sync_engine.py          # Cross-platform Python sync engine
+│   └── sync_engine.py          # Core sync engine, migration & workspace sync
+├── packages/                   # Monorepo packages & tool ports
+├── statusline/
+│   ├── status.py               # Cross-platform live telemetry status line
+│   └── agy-quota-cache.py      # /usage quota parser & cache
 ├── templates/
-│   └── shared-settings.json    # Shared setting template ({HOME} placeholders)
-├── docs/
-│   └── SYNC-ARCHITECTURE.md    # Transport & security breakdown
-└── skills/
-    └── antigravity-sync/       # Companion Antigravity skill
+│   └── shared-settings.json    # Shared settings template ({HOME} placeholders)
+├── rules/                      # Synced global rules
+├── skills/
+│   ├── antigravity-sync/       # Companion Antigravity sync skill
+│   └── local-delegate/         # Local MLX model delegation skill
+└── docs/
+    └── SYNC-ARCHITECTURE.md    # Transport & security architecture
 ```
 
 ---
 
 ## License
 
-MIT
+MIT © Heiko Brantsch

@@ -12,6 +12,7 @@ import json
 import shutil
 import platform
 import argparse
+import subprocess
 from datetime import datetime
 
 # Ensure stdout and stderr handle utf-8 safely across platforms (e.g. Windows cp1252)
@@ -219,25 +220,195 @@ def sync_statusline(statusline_dir: str, dry_run: bool = False) -> None:
                 print(f"[+] Synced statusline script: {item} -> {dest_file}")
 
 
+def setup_git_autostash() -> None:
+    """Ensure git pull.rebase and rebase.autoStash are safely enabled globally."""
+    try:
+        subprocess.run(["git", "config", "--global", "pull.rebase", "true"], check=False, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "config", "--global", "rebase.autoStash", "true"], check=False, stdout=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def migrate_workspace(repo_root: str, dry_run: bool = False) -> None:
+    """Migrate local Windows/macOS layout (projects/ folder and GEMINI.md) into antigravity-suite."""
+    print("==================================================")
+    print("      Antigravity Suite - Automated Migration     ")
+    print("==================================================")
+    
+    parent_dir = os.path.dirname(repo_root)
+    packages_dir = os.path.join(repo_root, "packages")
+    rules_dest_dir = os.path.join(get_home_dir(), ".gemini", "config", "rules")
+    suite_rules_dir = os.path.join(repo_root, "rules")
+
+    # 1. Check for legacy 'projects' folder in parent workspace
+    projects_dir = os.path.join(parent_dir, "projects")
+    if os.path.isdir(projects_dir):
+        if not dry_run:
+            os.makedirs(packages_dir, exist_ok=True)
+        items = os.listdir(projects_dir)
+        print(f"[*] Found legacy projects folder at: {projects_dir} ({len(items)} items)")
+        for item in items:
+            src = os.path.join(projects_dir, item)
+            dst = os.path.join(packages_dir, item)
+            if dry_run:
+                print(f"[*] [dry-run] Would move: {src} -> {dst}")
+            else:
+                if os.path.exists(dst):
+                    print(f"[!] Target already exists, skipping: {dst}")
+                else:
+                    shutil.move(src, dst)
+                    print(f"[+] Migrated package: {item} -> {dst}")
+        if not dry_run and not os.listdir(projects_dir):
+            try:
+                os.rmdir(projects_dir)
+                print(f"[+] Removed empty legacy projects folder: {projects_dir}")
+            except Exception:
+                pass
+    else:
+        print("[=] No legacy 'projects' directory found in workspace root.")
+
+    # 2. Check for root GEMINI.md in parent workspace
+    parent_gemini_md = os.path.join(parent_dir, "GEMINI.md")
+    if os.path.isfile(parent_gemini_md):
+        print(f"[*] Found root GEMINI.md at: {parent_gemini_md}")
+        global_rule_target = os.path.join(rules_dest_dir, "user_global.md")
+        suite_rule_target = os.path.join(suite_rules_dir, "user_global.md")
+        if dry_run:
+            print(f"[*] [dry-run] Would copy: {parent_gemini_md} -> {global_rule_target}")
+            print(f"[*] [dry-run] Would backup: {parent_gemini_md} -> {suite_rule_target}")
+        else:
+            os.makedirs(rules_dest_dir, exist_ok=True)
+            os.makedirs(suite_rules_dir, exist_ok=True)
+            shutil.copy2(parent_gemini_md, global_rule_target)
+            shutil.copy2(parent_gemini_md, suite_rule_target)
+            print(f"[+] Migrated global rules: {parent_gemini_md} -> {global_rule_target}")
+            print(f"[+] Backed up rules to suite: {suite_rule_target}")
+            bak_path = parent_gemini_md + ".migrated.bak"
+            shutil.move(parent_gemini_md, bak_path)
+            print(f"[+] Archived original root file: {bak_path}")
+
+    # 3. Update Git remote if still pointing to old repo name
+    try:
+        rem_out = subprocess.check_output(["git", "-C", repo_root, "remote", "get-url", "origin"], text=True, stderr=subprocess.DEVNULL).strip()
+        if "antigravity-sync" in rem_out:
+            new_url = rem_out.replace("antigravity-sync", "antigravity-suite")
+            if not dry_run:
+                subprocess.run(["git", "-C", repo_root, "remote", "set-url", "origin", new_url], check=False)
+                print(f"[+] Updated remote URL: {rem_out} -> {new_url}")
+    except Exception:
+        pass
+
+    # 4. Setup Git autostash
+    if not dry_run:
+        setup_git_autostash()
+        print("[+] Configured global Git pull.rebase and rebase.autoStash = true")
+
+    print("\n[+] Migration complete!\n")
+
+
+def sync_workspace_repos(workspace_root: str, dry_run: bool = False) -> None:
+    """Safe batch pull/rebase with autostash across all workspace git repositories."""
+    print("==================================================")
+    print("        Antigravity Suite - Workspace Sync        ")
+    print("==================================================")
+
+    if not os.path.isdir(workspace_root):
+        print(f"[-] Workspace root not found: {workspace_root}", file=sys.stderr)
+        return
+
+    setup_git_autostash()
+
+    repos_found = []
+    # Check workspace root itself
+    if os.path.isdir(os.path.join(workspace_root, ".git")):
+        repos_found.append(workspace_root)
+
+    # Check immediate children
+    for item in os.listdir(workspace_root):
+        sub = os.path.join(workspace_root, item)
+        if os.path.isdir(os.path.join(sub, ".git")):
+            repos_found.append(sub)
+
+    if not repos_found:
+        print(f"[-] No git repositories found in {workspace_root}")
+        return
+
+    print(f"[*] Found {len(repos_found)} repositories to synchronize:\n")
+
+    for repo in repos_found:
+        repo_name = os.path.basename(repo)
+        try:
+            status_out = subprocess.check_output(["git", "-C", repo, "status", "--porcelain"], text=True, stderr=subprocess.DEVNULL)
+            is_dirty = bool(status_out.strip())
+            dirty_tag = " (dirty: autostash active)" if is_dirty else ""
+
+            if dry_run:
+                print(f"[*] [dry-run] Would sync {repo_name}{dirty_tag}")
+                continue
+
+            # Run git pull --rebase --autostash
+            res = subprocess.run(
+                ["git", "-C", repo, "pull", "--rebase", "--autostash"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            out = res.stdout.strip()
+            if "Already up to date" in out:
+                print(f"  [=] {repo_name:25} : Up to date")
+            elif res.returncode == 0:
+                print(f"  [+] {repo_name:25} : Pulled latest updates{dirty_tag}")
+            else:
+                print(f"  [!] {repo_name:25} : Sync note - {res.stderr.strip() or out}")
+        except Exception as e:
+            print(f"  [!] {repo_name:25} : Error: {e}")
+
+    print("\n[+] Workspace repositories sync complete.\n")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Antigravity Sync Engine")
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    parent_workspace = os.path.dirname(repo_root)
+
+    parser = argparse.ArgumentParser(description="Antigravity Suite & Sync Engine")
     parser.add_argument(
         "--template",
-        default=os.path.join(os.path.dirname(__file__), "..", "templates", "shared-settings.json"),
+        default=os.path.join(repo_root, "templates", "shared-settings.json"),
         help="Path to shared settings template JSON",
     )
     parser.add_argument(
         "--rules-dir",
-        default=os.path.join(os.path.dirname(__file__), "..", "rules"),
+        default=os.path.join(repo_root, "rules"),
         help="Path to shared rules directory",
     )
     parser.add_argument(
         "--statusline-dir",
-        default=os.path.join(os.path.dirname(__file__), "..", "statusline"),
+        default=os.path.join(repo_root, "statusline"),
         help="Path to statusline scripts directory",
+    )
+    parser.add_argument(
+        "--workspace-sync",
+        action="store_true",
+        help="Perform safe multi-repo workspace git pull --rebase --autostash",
+    )
+    parser.add_argument(
+        "--workspace-dir",
+        default=parent_workspace,
+        help="Path to workspace root directory for --workspace-sync",
+    )
+    parser.add_argument(
+        "--migrate",
+        action="store_true",
+        help="Automatically migrate Windows/macOS legacy projects folder & GEMINI.md into suite",
     )
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
     args = parser.parse_args()
+
+    if args.migrate:
+        migrate_workspace(repo_root, dry_run=args.dry_run)
+
+    if args.workspace_sync:
+        sync_workspace_repos(os.path.abspath(args.workspace_dir), dry_run=args.dry_run)
 
     template_path = os.path.abspath(args.template)
     rules_path = os.path.abspath(args.rules_dir)

@@ -24,12 +24,14 @@ TEMPLATE_PATH = os.path.join(SCRIPT_DIR, "templates", "shared-settings.json")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Install Antigravity Sync")
+    parser = argparse.ArgumentParser(description="Antigravity Suite - Installer & Synchronizer")
     parser.add_argument("--dry-run", action="store_true", help="Preview installation without modifying files")
+    parser.add_argument("--workspace-sync", action="store_true", help="Perform safe multi-repo workspace git pull --rebase --autostash")
+    parser.add_argument("--migrate", action="store_true", help="Migrate legacy projects folder and GEMINI.md into suite structure")
     args = parser.parse_args()
 
     print("==================================================")
-    print("        Antigravity Sync - Setup & Sync           ")
+    print("        Antigravity Suite - Setup & Sync          ")
     print("==================================================")
 
     if not os.path.isfile(ENGINE_PATH):
@@ -39,8 +41,12 @@ def main():
     cmd = [sys.executable, ENGINE_PATH, "--template", TEMPLATE_PATH]
     if args.dry_run:
         cmd.append("--dry-run")
+    if args.workspace_sync:
+        cmd.append("--workspace-sync")
+    if args.migrate:
+        cmd.append("--migrate")
 
-    print("[*] Running initial synchronization...")
+    print("[*] Running synchronization...")
     res = subprocess.run(cmd)
     
     if res.returncode == 0:
