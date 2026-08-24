@@ -1,0 +1,7 @@
+{
+  "name": "agy-waypoints",
+  "version": "1.0.0",
+  "description": "Surfaces open tasks and waypoints as a persistent startup banner that stays until marked done.",
+  "author": "haiggoh",
+  "license": "MIT"
+}

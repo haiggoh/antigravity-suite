@@ -1,0 +1,10 @@
+{
+  "waypoints-banner": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 ./hooks/agy_waypoints_hook.py"
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "agy-no-hidden-changes",
+  "version": "1.0.0",
+  "description": "Rule plugin steering AI toward visible, honest, and reversible changes — preventing deceptive hidden-state workarounds.",
+  "author": "haiggoh",
+  "license": "MIT"
+}
