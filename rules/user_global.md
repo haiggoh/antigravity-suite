@@ -1,35 +1,42 @@
-# Antigravity Tooling & Plugin Workspace (`D:\antigravity`)
+# Global Guidelines & Developer Standards
 
-Welcome to the **Antigravity Tooling & Plugin Workspace**. This workspace contains dedicated Antigravity plugins, rules, skills, and utilities maintained by [@haiggoh](https://github.com/haiggoh).
-
----
-
-## Workspace Structure
-
-```text
-D:\antigravity\
-├── GEMINI.md                    # Root workspace guidelines & coding rules
-├── .agents/                     # Workspace-level agent customizations
-│   ├── rules/                   # Workspace rules
-│   └── skills/                  # Workspace skills
-└── projects/                    # New, dedicated Antigravity plugin repositories (agy-*)
-    ├── agy-no-hidden-changes/   # Antigravity rule plugin
-    ├── agy-measure-twice/       # Antigravity skill plugin
-    ├── agy-waypoints/           # Antigravity lifecycle hook & banner plugin
-    ├── agy-audit-loose-ends/    # Antigravity stop hook & reconciliation plugin
-    ├── agy-resume-interrupted/  # Antigravity session resumption hook plugin
-    ├── agy-session-bundle/      # Antigravity transcript bundler utility
-    ├── agy-desktop-sync/        # Antigravity MCP config sync utility
-    ├── agy-blender-automation/  # Antigravity 3D modeling workflow skill
-    └── get-haiggoh-agy/         # Antigravity package & plugin manager CLI
-```
+This configuration applies universally across all Antigravity agent sessions and workspaces on all connected devices (macOS and Windows).
 
 ---
 
-## Workspace Strategy & Rules
+## 1. Cross-Platform & Multi-Device Awareness
 
-1. **Independent Repositories**: All Antigravity projects are brand-new, standalone repositories prefixed with `agy-`. Published Claude Code repositories remain completely untouched.
-2. **Rule Enforcement**: Prefer visible, reversible, and honest code changes. Never use hidden workarounds (`agy-no-hidden-changes`).
-3. **Measure Twice**: Survey existing capabilities and match real events before writing custom automation scripts (`agy-measure-twice`).
-4. **Modular Design**: Keep individual plugins focused. Use progressive disclosure for skills and lifecycle hooks (`hooks.json`) for automatic interventions.
-5. **Antigravity Standard Layout**: Every plugin contains a valid `plugin.json` manifest, along with optional `hooks.json`, `rules/`, and `skills/`.
+* **Cross-OS Compatibility**: The development environment spans both **macOS and Windows**. Never write scripts or tooling that assume a single OS, hardcoded drive letter (e.g., `D:\`, `C:\`), or fixed home path (e.g., `/Users/...`).
+* **Path & Shell Handling**:
+  * Use platform-agnostic path handling (`os.path`, `pathlib.Path`, forward slashes where accepted).
+  * In commands and scripts, support both `python3` (macOS/Linux) and `python` (Windows).
+  * Ensure UTF-8 console and file encoding across all platforms (avoiding Windows cp1252 / CRLF issues).
+* **Auth & Host Isolation**:
+  * Different machines may run under different Google account logins and authentication tokens.
+  * Never commit, sync, or leak machine-local tokens, OAuth credentials, or user-specific email addresses.
+  * Machine-local configurations (e.g. `trustedWorkspaces`, tokens) remain host-specific, while rules, packages, and sync logic remain synchronized via the Antigravity Suite.
+
+---
+
+## 2. Core Development Principles
+
+### Honesty & Transparency (`agy-no-hidden-changes`)
+* **Visible & Reversible Changes**: Propose transparent code edits and avoid hidden workarounds, obfuscated scripts, or unannounced side effects.
+* **No Phantom Edits**: Always explain rationale for file and configuration modifications before making them.
+
+### Measure Twice (`agy-measure-twice`)
+* **Inspect Before Automating**: Survey existing codebase capabilities, SDKs, and platform APIs before proposing custom automation scripts.
+* **Respect Existing Architecture**: Align with existing patterns in the project rather than introducing redundant frameworks or tools.
+
+### Modular & Resilient Design
+* **Progressive Disclosure**: Keep skills, rules, and scripts concise, modular, and focused.
+* **Robust Error Handling**: Scripts and hooks must fail gracefully without hanging the agent execution loop or locking tool execution.
+
+---
+
+## 3. Git & Synchronization Hygiene
+
+* **Clean Commit Messages**: Use clear, conventional commit messages (e.g., `feat: ...`, `fix: ...`, `refactor: ...`).
+* **Monorepo Integrity**: Keep suite packages tracked directly as source directories rather than detached submodules unless explicitly intended.
+* **Safe Synchronization**: When synchronizing workspaces across machines, ensure local uncommitted work is safely stashed or committed before pulling remote changes.
+
