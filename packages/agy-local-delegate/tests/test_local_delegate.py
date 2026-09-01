@@ -103,3 +103,23 @@ def test_ram_preflight_already_served():
         assert res["already_served"] is True
         assert res["served_port"] == 8000
 
+
+def test_evict_servers_dry_run():
+    mock_servers = [{
+        "port": 8000,
+        "pid": 12345,
+        "backend": "rapid-mlx",
+        "command": "rapid-mlx --model qwen",
+        "rss_mb": 14500.0,
+        "etime": "01:20:00",
+        "attached": False,
+        "rank": 1,
+    }]
+    with patch("agy_local_delegate_core.list_resident_servers", return_value=mock_servers):
+        results = core.evict_servers(dry_run=True)
+        assert len(results) == 1
+        assert results[0]["pid"] == 12345
+        assert results[0]["action"] == "would_evict"
+        assert results[0]["rss_mb"] == 14500.0
+
+

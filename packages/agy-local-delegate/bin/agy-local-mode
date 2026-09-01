@@ -30,9 +30,10 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 PROXY_PORT="${AGY_LOCAL_PROXY_PORT:-9191}"
 LOCAL_UPSTREAM="${AGY_LOCAL_MODEL_ENDPOINT:-http://127.0.0.1:8000/v1}"
-LOCAL_MODEL="${AGY_LOCAL_MODEL_ID:-mlx-community/Qwen3.8-27B-4bit}"
+LOCAL_MODEL="${AGY_LOCAL_MODEL_ID:-}"
 PROXY_TIMEOUT="${AGY_LOCAL_PROXY_TIMEOUT:-180}"
 PROXY_DEBUG="${AGY_LOCAL_PROXY_DEBUG:-}"
+FORCE_MENU=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROXY_SCRIPT="$SCRIPT_DIR/agy_local_proxy.py"
@@ -44,6 +45,7 @@ AGY_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --model)    LOCAL_MODEL="$2"; shift 2 ;;
+        --menu|-m)  FORCE_MENU=1; shift ;;
         --upstream) LOCAL_UPSTREAM="$2"; shift 2 ;;
         --port)     PROXY_PORT="$2"; shift 2 ;;
         --timeout)  PROXY_TIMEOUT="$2"; shift 2 ;;
@@ -67,6 +69,21 @@ if [[ ! -f "$PROXY_SCRIPT" ]]; then
     echo "[agy-local-mode] ERROR: proxy script not found at $PROXY_SCRIPT" >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Model Selection Menu (csl interactive picker)
+# ---------------------------------------------------------------------------
+if [[ "$FORCE_MENU" -eq 1 ]] || [[ -z "$LOCAL_MODEL" && -t 0 && "${AGY_NO_MENU:-0}" != "1" ]]; then
+    CHOSEN_MODEL=$(python3 "$SCRIPT_DIR/agy_local_delegate.py" menu)
+    if [[ -z "$CHOSEN_MODEL" ]]; then
+        echo "[agy-local-mode] Selection cancelled."
+        exit 0
+    fi
+    LOCAL_MODEL="$CHOSEN_MODEL"
+fi
+
+# Fallback default if still empty (e.g. non-interactive script call)
+LOCAL_MODEL="${LOCAL_MODEL:-mlx-community/Qwen3.8-27B-4bit}"
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------

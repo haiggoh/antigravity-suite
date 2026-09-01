@@ -16,6 +16,7 @@ Features:
 import os
 import sys
 import re
+import time
 import socket
 import subprocess
 import json
@@ -474,3 +475,175 @@ def ram_preflight_check(
             f"only {avail_gb} GB available (would breach {floor_gb} GB floor)."
         ),
     }
+
+
+def get_attached_agy_ports() -> List[int]:
+    """Find ports attached to running agy sessions."""
+    attached = set()
+    try:
+        # Check agy processes
+        agy_pids_out = subprocess.check_output(["pgrep", "-x", "agy"]).decode().split()
+        for pid in agy_pids_out:
+            # Check open connections from agy pid
+            lsof_out = subprocess.check_output(["lsof", "-nP", "-p", pid]).decode()
+            for m in re.finditer(r":(\d+)\s+\(LISTEN|\(ESTABLISHED", lsof_out):
+                port = int(m.group(1))
+                if 8000 <= port <= 8020 or 9191 <= port <= 9210 or port == 8080:
+                    attached.add(port)
+    except Exception:
+        pass
+    return sorted(list(attached))
+
+
+def list_resident_servers(
+    port_range: Tuple[int, int] = (8000, 8015),
+    extra_ports: Tuple[int, ...] = (8080, 9191, 9192, 9193),
+) -> List[Dict[str, Any]]:
+    """Discover all running local inference servers and proxies with memory stats."""
+    servers = []
+    attached_ports = set(get_attached_agy_ports())
+
+    ports_to_check = list(range(port_range[0], port_range[1] + 1)) + list(extra_ports)
+    checked_pids = set()
+
+    for port in ports_to_check:
+        try:
+            lsof_out = subprocess.check_output(
+                ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                stderr=subprocess.DEVNULL
+            ).decode().strip()
+        except Exception:
+            continue
+
+        if not lsof_out:
+            continue
+
+        pid_str = lsof_out.splitlines()[0].strip()
+        if not pid_str.isdigit():
+            continue
+        pid = int(pid_str)
+        if pid in checked_pids or pid <= 1:
+            continue
+        checked_pids.add(pid)
+
+        # Get command line, RSS, and elapsed time
+        try:
+            cmd = subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)]).decode().strip()
+            rss_kb_str = subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)]).decode().strip()
+            etime_str = subprocess.check_output(["ps", "-o", "etime=", "-p", str(pid)]).decode().strip()
+            rss_mb = round(int(rss_kb_str) / 1024, 1) if rss_kb_str.isdigit() else 0.0
+        except Exception:
+            cmd = "unknown"
+            rss_mb = 0.0
+            etime_str = "0:00"
+
+        # Determine backend
+        cmd_lower = cmd.lower()
+        if "rapid-mlx" in cmd_lower:
+            backend = "rapid-mlx"
+        elif "llama-server" in cmd_lower or "llama.cpp" in cmd_lower:
+            backend = "llama.cpp"
+        elif "mlx_lm.server" in cmd_lower:
+            backend = "mlx-lm"
+        elif "vllm" in cmd_lower:
+            backend = "vllm-mlx"
+        elif "agy_local_proxy.py" in cmd_lower:
+            backend = "agy-proxy"
+        elif "python" in cmd_lower and ("8000" in cmd_lower or "9191" in cmd_lower):
+            backend = "python-server"
+        else:
+            backend = "other"
+
+        is_attached = port in attached_ports
+
+        # Ranking score (lower = better candidate for eviction)
+        # 0 = unattached proxy/zombie, 1 = unattached large server, 2 = attached server
+        if not is_attached:
+            if backend == "agy-proxy":
+                rank = 0
+            else:
+                rank = 1
+        else:
+            rank = 3
+
+        servers.append({
+            "port": port,
+            "pid": pid,
+            "backend": backend,
+            "command": cmd,
+            "rss_mb": rss_mb,
+            "etime": etime_str,
+            "attached": is_attached,
+            "rank": rank,
+        })
+
+    # Sort by rank ascending, then RSS descending
+    servers.sort(key=lambda s: (s["rank"], -s["rss_mb"]))
+    return servers
+
+
+def evict_servers(
+    port: Optional[int] = None,
+    pid: Optional[int] = None,
+    evict_all: bool = False,
+    dry_run: bool = False,
+) -> List[Dict[str, Any]]:
+    """Evict local model servers/proxies according to safety rankings."""
+    servers = list_resident_servers()
+    if not servers:
+        return []
+
+    targets = []
+    if pid is not None:
+        targets = [s for s in servers if s["pid"] == pid]
+    elif port is not None:
+        targets = [s for s in servers if s["port"] == port]
+    elif evict_all:
+        targets = servers
+    else:
+        # Evict single highest-ranked candidate
+        targets = [servers[0]]
+
+    results = []
+    for s in targets:
+        target_pid = s["pid"]
+        target_backend = s["backend"]
+        target_port = s["port"]
+        target_rss = s["rss_mb"]
+
+        if dry_run:
+            results.append({
+                "pid": target_pid,
+                "port": target_port,
+                "backend": target_backend,
+                "rss_mb": target_rss,
+                "action": "would_evict",
+            })
+        else:
+            try:
+                os.kill(target_pid, 15)  # SIGTERM
+                time.sleep(0.5)
+                # Check if still alive
+                try:
+                    os.kill(target_pid, 0)
+                    os.kill(target_pid, 9)  # SIGKILL if still lingering
+                except OSError:
+                    pass
+                results.append({
+                    "pid": target_pid,
+                    "port": target_port,
+                    "backend": target_backend,
+                    "rss_mb": target_rss,
+                    "action": "evicted",
+                })
+            except Exception as e:
+                results.append({
+                    "pid": target_pid,
+                    "port": target_port,
+                    "backend": target_backend,
+                    "rss_mb": target_rss,
+                    "action": f"failed: {e}",
+                })
+
+    return results
+

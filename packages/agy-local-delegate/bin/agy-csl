@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# agy-csl — Antigravity Session Local: Interactive model picker front-end for agy-local-mode.
+#
+# Usage:
+#   agy-csl              -> Interactive model selection menu
+#   agy-csl <model>      -> Launch directly with specific model
+#   agy-csl [AGY_ARGS]   -> Forward flags to agy
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHER="$SCRIPT_DIR/agy-local-mode"
+
+if [[ $# -eq 0 ]]; then
+    exec "$LAUNCHER" --menu
+else
+    exec "$LAUNCHER" "$@"
+fi

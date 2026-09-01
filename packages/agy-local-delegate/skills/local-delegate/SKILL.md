@@ -61,31 +61,42 @@ AGY speaks the Gemini API protocol natively. Rapid-MLX (for MLX models) and llam
 
 > **No model allowlist**: Unlike Claude Code's strict model allowlist, AGY uses `GOOGLE_GEMINI_BASE_URL` to redirect traffic, so **no spoofing required** — the local model can identify as itself.
 
-### Quick Start
+### Quick Start & Interactive Model Selection (`agy-csl`)
 
 ```bash
 # 1. Start your local model server (Rapid-MLX default on port 8000)
 ~/.venvs/rapid-mlx-0.12.18/bin/rapid-mlx --model ~/.models/Qwen3.8-27B-4bit
 
-# 2. In another terminal, launch AGY in local mode:
+# 2. Interactive model selection menu:
+agy-csl
+# or:
 agy-local-mode
 
-# Or with a specific model/upstream:
-agy-local-mode --model mlx-community/Qwen3.8-27B-4bit \
-               --upstream http://127.0.0.1:8000/v1
+# 3. Direct launch with a specific model profile:
+agy-local-mode --model qwen-3.8-operator
+agy-local-mode --model deepseek-r1-architect
 ```
 
-### Manual Proxy Control
+---
+
+## Mode 3: Safe Eviction & RAM Management (`agy-evict`)
+
+When multiple inference servers or proxies hold Apple Silicon memory:
 ```bash
-# Start proxy only (useful for scripting):
-python3 packages/agy-local-delegate/bin/agy_local_proxy.py \
-  --port 9191 \
-  --upstream http://127.0.0.1:8000/v1 \
-  --model mlx-community/Qwen3.8-27B-4bit
+# Inspect resident servers, RSS memory, uptime, and safety ranks:
+agy-evict --status
 
-# Then in another shell:
-GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9191 agy
+# Preview eviction without killing anything:
+agy-evict --dry-run
+
+# Evict single highest-ranked candidate safely (preserves attached AGY sessions):
+agy-evict
+
+# Evict all resident local model servers:
+agy-evict --all
 ```
+
+---
 
 ### Environment Variables
 | Variable | Default | Description |
@@ -95,3 +106,5 @@ GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9191 agy
 | `AGY_LOCAL_MODEL_ID` | `mlx-community/Qwen3.8-27B-4bit` | Model ID sent to upstream |
 | `AGY_LOCAL_PROXY_TIMEOUT` | `180` | Seconds before upstream timeout |
 | `AGY_LOCAL_PROXY_DEBUG` | *(unset)* | Set to any value for verbose logging |
+| `AGY_SKIP_RAM_PREFLIGHT` | `0` | Set `1` to bypass RAM preflight safety check |
+

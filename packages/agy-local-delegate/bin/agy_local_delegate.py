@@ -38,6 +38,9 @@ def main():
     preflight_p.add_argument("--overhead", type=float, default=6.0, help="Runtime overhead in GB (Default: 6)")
     preflight_p.add_argument("--dir", default=None, help="Custom models directory")
 
+    # menu command (csl-style picker)
+    subparsers.add_parser("menu", help="Interactive model selection picker (csl)")
+
     # dispatch command
     dispatch_p = subparsers.add_parser("dispatch", help="Dispatch prompt to local model")
     dispatch_p.add_argument("--model", default="qwen-3.8-operator", help="Model alias (Default: qwen-3.8-operator)")
@@ -108,6 +111,81 @@ def main():
             print(f"⚠️  RAM Preflight: Loading {res['model_alias']} looks UNSAFE right now!", file=sys.stderr)
             print(f"   {res['message']}", file=sys.stderr)
             print(f"   Available: {res['available_gb']} GB | Needs: ~{res['need_gb']} GB (weights {res['weights_gb']} + {res['overhead_gb']} GB overhead)", file=sys.stderr)
+            sys.exit(1)
+
+    elif args.command == "menu":
+        scan = core.scan_local_models_dir()
+        installed_subdirs = {m["subdir"]: m["size_gb"] for m in scan.get("installed_catalog", [])}
+        active_servers = core.find_active_model_servers()
+        running_models = {}
+        for s in active_servers:
+            for m in s.get("models", []):
+                running_models[m] = s["port"]
+
+        print("\n╔══════════════════════════════════════════════════════════════════════════╗", file=sys.stderr)
+        print("║  🖥️  Antigravity Local Mode — Model Selection (csl)                      ║", file=sys.stderr)
+        print("╚══════════════════════════════════════════════════════════════════════════╝\n", file=sys.stderr)
+
+        items = []
+        idx = 1
+        for alias, info in core.MODEL_CATALOG.items():
+            subdir = info.get("subdir", "")
+            is_installed = subdir in installed_subdirs
+            is_running = (
+                info["default_model_id"] in running_models or
+                alias in running_models or
+                subdir in running_models
+            )
+            running_port = (
+                running_models.get(info["default_model_id"]) or
+                running_models.get(alias) or
+                running_models.get(subdir)
+            )
+
+            status_tags = []
+            if is_running:
+                status_tags.append(f"[Active Port {running_port} 🔌]")
+            if is_installed:
+                size_gb = installed_subdirs[subdir]
+                status_tags.append(f"[Installed {size_gb} GB ✅]")
+
+            tag_str = " " + " ".join(status_tags) if status_tags else ""
+            default_tag = " (Default)" if info.get("is_default") else ""
+
+            print(f"  {idx}) {alias:<22}{default_tag}{tag_str}", file=sys.stderr)
+            print(f"     └─ {info['description']}", file=sys.stderr)
+            items.append((alias, info["default_model_id"]))
+            idx += 1
+
+        print("\n  c) Custom Model ID or path", file=sys.stderr)
+        print("  q) Quit\n", file=sys.stderr)
+
+        try:
+            choice = input("Selection [1]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("", file=sys.stderr)
+            sys.exit(1)
+
+        if not choice:
+            choice = "1"
+
+        if choice.lower() == "q":
+            sys.exit(1)
+        elif choice.lower() == "c":
+            try:
+                custom_model = input("Enter custom model ID / path: ").strip()
+                if not custom_model:
+                    sys.exit(1)
+                print(custom_model)
+                sys.exit(0)
+            except (EOFError, KeyboardInterrupt):
+                sys.exit(1)
+        elif choice.isdigit() and 1 <= int(choice) <= len(items):
+            selected_alias, selected_id = items[int(choice) - 1]
+            print(selected_alias)
+            sys.exit(0)
+        else:
+            print(f"Invalid selection: {choice}", file=sys.stderr)
             sys.exit(1)
 
     elif args.command == "dispatch":
