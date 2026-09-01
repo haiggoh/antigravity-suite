@@ -53,6 +53,8 @@ def scan_file_for_secrets(filepath: str) -> List[Dict[str, Any]]:
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             for line_idx, line in enumerate(f, 1):
+                if "# noaudit" in line:
+                    continue
                 for pattern, name in SECRET_PATTERNS:
                     m = re.search(pattern, line)
                     if m:

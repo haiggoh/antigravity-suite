@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.3.3] - 2026-09-01
+
+### 🛡️ Audit Fixture Suppression
+
+* Bumped `agy-audit-loose-ends` from `0.1.0` to `0.1.1`.
+* Added an explicit `# noaudit` line marker for intentional secret fixtures.
+* Added regression coverage proving marked lines are excluded from secret scans.
+* Kept redaction behavior unchanged for unmarked content.
+
 ## [v1.3.2] - 2026-09-01
 
 ### 🛠️ Fixes & Documentation

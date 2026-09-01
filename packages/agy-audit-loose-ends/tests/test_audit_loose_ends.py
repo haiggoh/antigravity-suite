@@ -8,7 +8,7 @@ import agy_audit_core as core
 
 
 def test_redact_secret_text():
-    sample = "Anthropic key: sk-ant-api03-1234567890abcdef1234567890abcdef and Google: AIzaSyD1234567890abcdef1234567890abcdef"
+    sample = "Anthropic key: sk-ant-api03-1234567890abcdef1234567890abcdef and Google: AIzaSyD1234567890abcdef1234567890abcdef"  # noaudit
     redacted, count = core.redact_secret_text(sample)
     assert count == 2
     assert "sk-ant-" not in redacted or "REDACTED" in redacted
@@ -39,3 +39,13 @@ def test_scan_workspace_records():
         report_str = core.format_audit_report(report)
         assert "Exposed Secrets Detected" in report_str
         assert "Unreconciled / Open Task Items" in report_str
+
+def test_noaudit_suppresses_secret_scan():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fixture = os.path.join(tmpdir, "intentional-secret.txt")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            handle.write(
+                "Anthropic: sk-ant-api03-1234567890abcdef1234567890abcdef"
+                "  # noaudit\n"
+            )
+        assert core.scan_file_for_secrets(fixture) == []

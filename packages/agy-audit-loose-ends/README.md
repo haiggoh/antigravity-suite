@@ -10,5 +10,6 @@ Complex coding sessions often leave stale to-do items in workspace markdown file
 
 ## Features
 - **Secret Detection**: Scans for Google, Anthropic, OpenAI, GitHub, and Slack keys.
+- **Intentional Test Fixtures**: Add `# noaudit` to a line to exclude that line from secret-scan findings.
 - **Task Reconciliation**: Flags uncompleted WIP/TODO items in `GEMINI.md` and task stores.
 - **Fail-Safe & Standard Library**: Standard library only, runs cleanly cross-platform.
