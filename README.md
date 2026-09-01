@@ -8,21 +8,22 @@ A modular, production-ready power-user monorepo and configuration synchronizatio
 
 ---
 
-## 🌟 Included Monorepo Packages & Plugins
+## 🌟 Included Monorepo Packages & Skills
 
-| Package | Type | Description |
+| Package | Skills Provided | Description |
 | :--- | :--- | :--- |
-| [**`agy-statusline`**](packages/agy-statusline) | Plugin / Telemetry | High-performance status line with sub-millisecond local quota discovery, token metrics, context meters, and non-blocking tips. |
-| [**`agy-sync`**](packages/agy-sync) | Plugin / Core Engine | Universal settings & rules synchronizer with conflict-free workspace auto-stash and bilateral standalone repo syncing. |
-| [**`agy-brief-agents`**](packages/agy-brief-agents) | Delegation Plugin | Compiles global rules & workspace conventions into a compact briefing index for delegated subagents. |
-| [**`agy-resume-interrupted`**](packages/agy-resume-interrupted) | Continuity Plugin | Detects rate-limited, stalled, or crashed prior sessions and formats exact continuation prompts. |
-| [**`agy-audit-loose-ends`**](packages/agy-audit-loose-ends) | Audit Plugin | End-of-task reconciliation for task stores, `GEMINI.md`, and atomic credential/secret leak redaction. |
-| [**`agy-measure-twice`**](packages/agy-measure-twice) | Skill Plugin | Pre-execution inspection skill guiding agents to survey existing capabilities before writing custom scripts. |
-| [**`agy-no-hidden-changes`**](packages/agy-no-hidden-changes) | Rule Plugin | Enforces transparent, honest, and reversible code modifications. Prevents phantom workarounds. |
-| [**`agy-waypoints`**](packages/agy-waypoints) | Hook Plugin | Execution lifecycle banner system and structured milestone manager. |
-| [**`local-delegate`**](skills/local-delegate) | Skill | Offline local model offloading to Apple MLX / Ollama for zero-quota local tasks. |
+| [**`agy-run-to-completion`**](packages/agy-run-to-completion) | `run-to-completion`, `autopilot`, `triage-for-autonomy`, `execute-unattended`, `ungate-queue`, `close-out-the-run` | Autonomous multi-step execution loop, queue scoring, and attended blocker ungating. |
+| [**`agy-brief-agents`**](packages/agy-brief-agents) | `brief-agents` | Compiles global rules & workspace conventions into a compact briefing index for delegated subagents. |
+| [**`agy-resume-interrupted`**](packages/agy-resume-interrupted) | `resume-interrupted` | Detects rate-limited, stalled, or crashed prior sessions and formats exact continuation prompts. |
+| [**`agy-audit-loose-ends`**](packages/agy-audit-loose-ends) | `audit-loose-ends` | End-of-task reconciliation for task stores, `GEMINI.md`, and atomic credential/secret leak redaction. |
+| [**`agy-statusline`**](packages/agy-statusline) | *(Statusline Telemetry)* | High-performance status line with sub-millisecond local quota discovery, token metrics, and context meters. |
+| [**`agy-sync`**](packages/agy-sync) | `antigravity-sync` | Universal settings & rules synchronizer with conflict-free workspace auto-stash. |
+| [**`agy-measure-twice`**](packages/agy-measure-twice) | `measure-twice` | Pre-execution inspection skill guiding agents to survey existing capabilities before writing custom scripts. |
+| [**`agy-no-hidden-changes`**](packages/agy-no-hidden-changes) | *(Rule)* | Enforces transparent, honest, and reversible code modifications without phantom edits. |
+| [**`agy-waypoints`**](packages/agy-waypoints) | `waypoints` | Execution lifecycle banner system and structured milestone manager. |
+| [**`local-delegate`**](skills/local-delegate) | `local-delegate` | Offline local model offloading to Apple MLX / Ollama for zero-quota local tasks. |
 
-> 🗺️ **Evolution Roadmap**: For upcoming features ported from the Claude Code `haiggoh` suite (Transcript Distiller, Run-To-Completion, MCP Probe Harness), see [docs/ROADMAP.md](docs/ROADMAP.md).
+> 🗺️ **Evolution Roadmap**: For details on architectural mappings and upcoming Phase 3 / Phase 4 features, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
@@ -43,9 +44,9 @@ python install.py
 ```
 
 `install.py` automatically:
-1. Pulls the latest suite commits from GitHub (with safe `--autostash`).
+1. Pulls latest suite commits with safe `--autostash`.
 2. Syncs global rules to `~/.gemini/config/rules/`.
-3. Auto-discovers and syncs all package skills to `~/.gemini/antigravity-cli/skills/` and `~/.gemini/config/skills/`.
+3. Auto-discovers and syncs all package skills to `~/.gemini/antigravity-cli/skills/` and `~/.gemini/config/skills/` (using clean skill names without prefixes).
 4. Installs statusline telemetry scripts to `~/.gemini/statusline/`.
 5. Deploys root workspace guidelines (`GEMINI.md`) and hooks (`.agents/`) into your parent workspace.
 6. Cleans up legacy ad-hoc directories.
@@ -57,7 +58,7 @@ python install.py
 The synchronization engine (`bin/sync_engine.py`) is completely platform-agnostic:
 
 * **Any Host Topology**: Supports macOS ⟷ macOS, Windows ⟷ Windows (any drive letter: `C:`, `D:`, `E:`), macOS ⟷ Windows, and Linux.
-* **Account & Token Isolation**: Machine-local variables (`email`, session tokens, `trustedWorkspaces`) remain strictly isolated per machine. You can sync settings across work and personal accounts with zero credential bleed.
+* **Account & Token Isolation**: Machine-local variables (`email`, session tokens, `trustedWorkspaces`) remain strictly isolated per machine.
 * **Workspace Auto-Stash (`--workspace-sync`)**: Automatically discovers all Git repositories in your workspace root and pulls updates with conflict-free rebase & auto-stash.
 * **Dynamic Package Discovery**: Automatically discovers packages in `packages/` and links skills, rules, and binaries cleanly.
 
@@ -73,11 +74,12 @@ antigravity-suite/
 ├── bin/
 │   ├── sync_engine.py          # Core configuration and workspace engine
 │   └── sync_standalone_fork.py # Bi-directional package / fork synchronizer
-├── packages/                   # First-class Antigravity packages (agy-*)
-│   ├── agy-statusline/         # Live telemetry & quota status line
+├── packages/                   # Monorepo packages (agy-*)
+│   ├── agy-run-to-completion/  # Autonomous execution & ungate engine (6 skills)
 │   ├── agy-brief-agents/       # Subagent briefing index & rule injector
 │   ├── agy-resume-interrupted/ # Interrupted session detector & resumer
 │   ├── agy-audit-loose-ends/   # Durable record & secret audit engine
+│   ├── agy-statusline/         # Live telemetry & quota status line
 │   ├── agy-measure-twice/      # Pre-execution inspection skill
 │   ├── agy-no-hidden-changes/  # Transparent code modification rule
 │   └── agy-waypoints/          # Lifecycle hook & banner plugin

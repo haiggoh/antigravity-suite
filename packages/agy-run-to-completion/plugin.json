@@ -1,0 +1,15 @@
+{
+  "name": "agy-run-to-completion",
+  "version": "0.1.0",
+  "description": "Autonomous Multi-Step Execution, Queue Triage, and Blocker Ungating for Google Antigravity",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "skills": [
+    "skills/run-to-completion",
+    "skills/autopilot",
+    "skills/triage-for-autonomy",
+    "skills/execute-unattended",
+    "skills/ungate-queue",
+    "skills/close-out-the-run"
+  ]
+}
