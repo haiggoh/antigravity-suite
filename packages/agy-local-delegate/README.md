@@ -15,7 +15,7 @@ One-time AGY provider setup is required in `~/.gemini/antigravity-cli/settings.j
 Preserve any other existing settings in that file. Then run:
 
 ```bash
-agy-local-mode                         # default qwen-3.8-operator
+agy-local-mode                         # opens picker (Ornith default)
 agy-csl                                # interactive model picker
 agy-local-mode --model qwen-3.8-operator
 ```

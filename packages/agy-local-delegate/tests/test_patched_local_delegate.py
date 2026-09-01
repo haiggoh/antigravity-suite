@@ -52,7 +52,7 @@ class PatchedDelegateTests(unittest.TestCase):
             self.assertEqual(exit_info.exception.code, 0)
         finally:
             sys.argv, sys.stdin = old_argv, old_stdin
-        self.assertEqual(stdout.getvalue(), "qwen-3.8-operator\n")
+        self.assertEqual(stdout.getvalue(), "ornith-1.5-35b\n")
         self.assertIn("Selection [1]:", stderr.getvalue())
 
     def test_tool_call_round_trip(self):

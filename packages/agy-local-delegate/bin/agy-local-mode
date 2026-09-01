@@ -19,7 +19,7 @@ PROXY_SCRIPT="$SCRIPT_DIR/agy_local_proxy.py"
 CORE_DIR="$SCRIPT_DIR"
 [[ -f "$CORE_DIR/agy_local_delegate_core.py" ]] || CORE_DIR="$(dirname "$SCRIPT_DIR")"
 
-LOCAL_MODEL="${AGY_LOCAL_MODEL_ID:-qwen-3.8-operator}"
+LOCAL_MODEL="${AGY_LOCAL_MODEL_ID:-}"
 LOCAL_UPSTREAM="${AGY_LOCAL_MODEL_ENDPOINT:-}"
 PROXY_PORT="${AGY_LOCAL_PROXY_PORT:-}"
 PROXY_TIMEOUT="${AGY_LOCAL_PROXY_TIMEOUT:-180}"
@@ -62,7 +62,7 @@ for required_file in "$DELEGATE_SCRIPT" "$PROXY_SCRIPT" "$CORE_DIR/agy_local_del
     fi
 done
 
-if [[ "$FORCE_MENU" -eq 1 ]]; then
+if [[ "$FORCE_MENU" -eq 1 || -z "$LOCAL_MODEL" ]]; then
     if ! CHOSEN_MODEL=$(python3 "$DELEGATE_SCRIPT" menu); then
         echo "[agy-local-mode] Selection cancelled."
         exit 0

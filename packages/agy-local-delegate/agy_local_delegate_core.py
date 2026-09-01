@@ -5,7 +5,7 @@ or code inspections to free local LLMs running via OpenAI-compatible endpoints
 (e.g., Rapid-MLX for MLX, llama.cpp / llama-server for GGUF, Ollama, LM Studio).
 
 Features:
-  * Full catalog updated to Qwen 3.8 (replacing Qwen 3.6 as default operator),
+  * Full catalog includes Ornith 1.5 as the recommended local-session default, plus Qwen 3.8,
     DeepSeek R1, KAT Coder, Gemma 4, Kimi-VL, Devstral, Nemotron, and Llama Scout.
   * Live on-disk model scanner for ~/.models with size and availability reporting.
   * Bounded file context bundler with overflow protection.
@@ -30,13 +30,25 @@ DEFAULT_MODELS_DIR = os.path.expanduser("~/.models")
 
 # Comprehensive local model catalog with capabilities & on-disk directories
 MODEL_CATALOG = {
-    # --- Qwen 3.8 Series (Default Workhorse) ---
+    # --- Recommended Full Local Session ---
+    "ornith-1.5-35b": {
+        "description": (
+            "Ornith 1.5 35B-A3B non-thinking — recommended AGY local session"
+        ),
+        "default_model_id": (
+            "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit"
+        ),
+        "subdir": "Ornith-1.5-35B-A3B-MLX-4bit",
+        "context_window": 262144,
+        "is_default": True,
+    },
+
+    # --- Qwen 3.8 Series ---
     "qwen-3.8-operator": {
-        "description": "Fast 27B general-purpose coding & operations workhorse (Default)",
+        "description": "Fast 27B general-purpose coding & operations workhorse",
         "default_model_id": "mlx-community/Qwen3.8-27B-4bit",
         "subdir": "Qwen3.8-27B-4bit",
         "context_window": 32768,
-        "is_default": True,
     },
     "qwen-3.8-thinking": {
         "description": "Qwen 3.8 reasoning model with chain-of-thought analysis",
