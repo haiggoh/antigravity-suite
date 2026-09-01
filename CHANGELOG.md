@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.4.1] - 2026-09-01
+
+### 🔧 CLI Executable Permission Repair
+
+* Restored executable mode on the Transcript Distiller CLI.
+* Restored executable mode on both `get-antigravity` entry points.
+* Verified that file contents remain byte-for-byte identical to `v1.4.0`.
+* Revalidated Bash and Python syntax after the mode correction.
+
 ## [v1.4.0] - 2026-09-01
 
 ### 🚀 Verified Full Local AGY Sessions
