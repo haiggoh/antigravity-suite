@@ -19,9 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### 🧠 RAM Preflight Safety & Unified Memory Protection
 * Implemented cross-platform RAM preflight engine (`agy_local_delegate.py preflight` / `ram_preflight_check`):
+  * **Mandatory in-flight guard**: Automatically runs before any local dispatch execution (`dispatch_local_prompt`), preventing unified memory freeze.
   * **Zero-RAM short-circuit**: Detects if requested model is already served on ports `8000–8015` and reuses it without allocating duplicate memory.
   * **Resident size calculation**: Evaluates on-disk model weight size + runtime overhead against live free system RAM (`vm_stat`/`sysctl`).
   * **16.0 GB Floor**: Enforces a strict safe memory floor to avoid Apple Silicon UI and Terminal freezes.
+
+#### 📋 Automatic Offload Rule (`local-agents-offload.md`)
+* Added standing rule `local-agents-offload.md` to fix the evaluation catch-22:
+  * **Upfront Planning**: Decides per-step execution target (`local:operator` vs `cloud:<reason>`) during task decomposition before cloud tokens are spent.
+  * **Default to Operator**: Flips the burden of proof so bulk, mechanical, and repetitive work defaults to `local:operator` ($0 per token).
+  * **Supervised Ground-Truth Verification**: Keeps high-level judgment and orchestration on cloud while verifying local model outputs against tests and real diffs.
 
 #### 🔌 Dynamic Port Discovery & Slot Allocation
 * Replaced hardcoded ports with dynamic slot hunting:

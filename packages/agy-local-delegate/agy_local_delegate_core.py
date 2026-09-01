@@ -277,8 +277,20 @@ def dispatch_local_prompt(
     files: Optional[List[str]] = None,
     endpoint: Optional[str] = None,
     timeout: float = 120.0,
+    skip_ram_preflight: bool = False,
 ) -> Dict[str, Any]:
     """Send prompt to local model endpoint and return parsed response."""
+    # 1. Mandatory RAM Preflight Check (prevent unified memory freeze)
+    if not skip_ram_preflight and os.environ.get("AGY_SKIP_RAM_PREFLIGHT", "0") != "1":
+        preflight = ram_preflight_check(model_alias)
+        if not preflight.get("fits", True):
+            return {
+                "success": False,
+                "error": f"RAM preflight safety check failed: {preflight.get('message')}",
+                "hint": "Free resident memory with 'agy-evict' or bypass with AGY_SKIP_RAM_PREFLIGHT=1.",
+                "preflight": preflight,
+            }
+
     base_url = endpoint or get_endpoint_url()
     completions_url = f"{base_url}/chat/completions"
     payload = build_chat_payload(prompt, model_alias=model_alias, files=files)

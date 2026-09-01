@@ -47,6 +47,7 @@ def main():
     dispatch_p.add_argument("--prompt", required=True, help="Task prompt string")
     dispatch_p.add_argument("--files", nargs="*", default=[], help="Optional file paths")
     dispatch_p.add_argument("--endpoint", default=None, help="Custom server URL")
+    dispatch_p.add_argument("--skip-preflight", action="store_true", help="Skip RAM preflight check")
 
     args = parser.parse_args()
 
@@ -194,6 +195,7 @@ def main():
             model_alias=args.model,
             files=args.files,
             endpoint=args.endpoint,
+            skip_ram_preflight=args.skip_preflight,
         )
         if res.get("success"):
             print(res["reply"])

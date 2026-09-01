@@ -1,15 +1,20 @@
 ---
 name: local-delegate
-description: Offload heavy file analysis, code reviews, or text transformations to free local MLX models on Apple Silicon (Qwen 3.8, DeepSeek R1, KAT Coder, Gemma 4, Devstral). Also enables running local models as the primary AGY engine via agy-local-mode.
+description: Use when planning or decomposing ANY multi-step task involving reading, searching, summarizing, transforming, drafting, reviewing, or editing across files. Routes bulk/mechanical legwork to a free local model (by default `qwen-3.8-operator` on Apple Silicon) instead of burning cloud quota, keeping orchestration and judgment on cloud. Automatically runs RAM preflight before execution.
 ---
 
 # local-delegate Skill
 
-## Purpose
-Two complementary modes of local model use:
+## Core Principle: Decide Upfront at Decomposition (Fixing the Catch-22)
+The biggest quota saving is **$0 local compute**. The old trap was classifying tasks as either "too trivial to offload" or "too difficult to offload" — resulting in 100% cloud execution.
 
-1. **Delegate mode**: Dispatch specific sub-tasks to a local model from within a cloud AGY session (zero quota consumed for the delegated work).
-2. **Local engine mode** (`agy-local-mode`): Boot AGY with a local Qwen 3.8 / MLX model as the *primary engine* — useful when cloud quota has run out.
+**The Fix**:
+1. **Decide UPFRONT at decomposition** — annotate each planned step before burning cloud tokens:
+   - `local:operator` — delegated to local Apple Silicon MLX compute ($0 per token).
+   - `cloud:<reason>` — kept on cloud with specific justification (`cloud:frontier-reasoning`, `cloud:final-verification`, `cloud:not-worth-offloading`).
+2. **Default to `operator`**: Bulk file inspections, log parsing, code reviews, formatting, boilerplate, and transformations default to `qwen-3.8-operator`.
+3. **Keep Judgment on Cloud, Delegate Legwork**: Cloud agent coordinates, evaluates, and verifies.
+4. **Mandatory RAM Preflight**: Every local dispatch verifies memory headroom before execution to prevent unified memory freeze.
 
 ---
 
@@ -34,7 +39,7 @@ Two complementary modes of local model use:
 python3 packages/agy-local-delegate/bin/agy_local_delegate.py scan
 ```
 
-### Dispatch a Task
+### Dispatch a Task (RAM Preflight Enforced Automatically)
 ```bash
 python3 packages/agy-local-delegate/bin/agy_local_delegate.py dispatch \
   --model qwen-3.8-operator \

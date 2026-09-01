@@ -74,7 +74,7 @@ def test_dispatch_local_prompt_mocked():
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("urllib.request.urlopen", return_value=mock_resp):
-        res = core.dispatch_local_prompt("Refactor code", model_alias="qwen-3.8-operator")
+        res = core.dispatch_local_prompt("Refactor code", model_alias="qwen-3.8-operator", skip_ram_preflight=True)
         assert res["success"] is True
         assert res["reply"] == "Refactored function successfully."
 
@@ -121,5 +121,19 @@ def test_evict_servers_dry_run():
         assert results[0]["pid"] == 12345
         assert results[0]["action"] == "would_evict"
         assert results[0]["rss_mb"] == 14500.0
+
+
+def test_dispatch_local_prompt_ram_preflight_block():
+    mock_preflight = {
+        "fits": False,
+        "already_served": False,
+        "message": "Tight memory (would breach 16GB floor)",
+    }
+    with patch("agy_local_delegate_core.ram_preflight_check", return_value=mock_preflight):
+        res = core.dispatch_local_prompt("Refactor code", model_alias="qwen-3.8-operator")
+        assert res["success"] is False
+        assert "RAM preflight safety check failed" in res["error"]
+
+
 
 
