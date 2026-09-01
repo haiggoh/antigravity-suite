@@ -1,0 +1,8 @@
+{
+  "name": "agy-local-delegate",
+  "version": "0.1.0",
+  "description": "Local Model Delegation and MLX Offloading Engine for Google Antigravity",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "skills": ["skills/local-delegate"]
+}

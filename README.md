@@ -12,6 +12,7 @@ A modular, production-ready power-user monorepo and configuration synchronizatio
 
 | Package | Skills Provided | Description |
 | :--- | :--- | :--- |
+| [**`agy-local-delegate`**](packages/agy-local-delegate) | `local-delegate` | Offline local model offloading to Apple Silicon MLX / Ollama for zero-quota tasks. |
 | [**`agy-run-to-completion`**](packages/agy-run-to-completion) | `run-to-completion`, `autopilot`, `triage-for-autonomy`, `execute-unattended`, `ungate-queue`, `close-out-the-run` | Autonomous multi-step execution loop, queue scoring, and attended blocker ungating. |
 | [**`agy-brief-agents`**](packages/agy-brief-agents) | `brief-agents` | Compiles global rules & workspace conventions into a compact briefing index for delegated subagents. |
 | [**`agy-resume-interrupted`**](packages/agy-resume-interrupted) | `resume-interrupted` | Detects rate-limited, stalled, or crashed prior sessions and formats exact continuation prompts. |
@@ -21,9 +22,8 @@ A modular, production-ready power-user monorepo and configuration synchronizatio
 | [**`agy-measure-twice`**](packages/agy-measure-twice) | `measure-twice` | Pre-execution inspection skill guiding agents to survey existing capabilities before writing custom scripts. |
 | [**`agy-no-hidden-changes`**](packages/agy-no-hidden-changes) | *(Rule)* | Enforces transparent, honest, and reversible code modifications without phantom edits. |
 | [**`agy-waypoints`**](packages/agy-waypoints) | `waypoints` | Execution lifecycle banner system and structured milestone manager. |
-| [**`local-delegate`**](skills/local-delegate) | `local-delegate` | Offline local model offloading to Apple MLX / Ollama for zero-quota local tasks. |
 
-> 🗺️ **Evolution Roadmap**: For details on architectural mappings and upcoming Phase 3 / Phase 4 features, see [docs/ROADMAP.md](docs/ROADMAP.md).
+> 🗺️ **Evolution Roadmap**: For details on upcoming Phase 4 (Package Hub & Sync) and Phase 5 features, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
@@ -75,6 +75,7 @@ antigravity-suite/
 │   ├── sync_engine.py          # Core configuration and workspace engine
 │   └── sync_standalone_fork.py # Bi-directional package / fork synchronizer
 ├── packages/                   # Monorepo packages (agy-*)
+│   ├── agy-local-delegate/     # Apple Silicon MLX local model offloading
 │   ├── agy-run-to-completion/  # Autonomous execution & ungate engine (6 skills)
 │   ├── agy-brief-agents/       # Subagent briefing index & rule injector
 │   ├── agy-resume-interrupted/ # Interrupted session detector & resumer

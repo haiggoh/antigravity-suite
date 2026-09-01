@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.3.0] - 2026-09-01
+
+### 🚀 Phase 3: Hardware Offload & Local Intelligence
+
+#### 📦 New Monorepo Package: `agy-local-delegate`
+* **`agy-local-delegate`** (`packages/agy-local-delegate`, Skill: `local-delegate`):
+  * Offline local model offloading for Apple Silicon (MLX / vLLM-MLX / Ollama / OpenAI-compatible local endpoints).
+  * Pre-configured model profiles: `qwen-3.6-operator` (27B), `qwen-3.6-thinking`, `deepseek-r1-architect`, `gemma-4-26b`, `devstral-2-123b`, and `llama-scout`.
+  * Safe multi-file context bundling with automatic overflow protection (`bundle_file_attachments`).
+  * CLI tool: `bin/agy_local_delegate.py` (`models`, `check`, `dispatch`).
+  * Unit test suite: `tests/test_local_delegate.py` (100% passing).
+
+#### 🗺️ Roadmap Update
+* Completed Phase 3 (`local-delegate`).
+* Deferred `mcp-smoke-test` and `turn-speak` to Phase 5 (post-Phase 4).
+
+---
+
 ## [v1.2.0] - 2026-09-01
 
 ### 🚀 Phase 2: Autonomous Multi-Step Execution Loop
@@ -23,9 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Clean skill names (without `agy-` prefixes) for seamless integration inside Antigravity agents.
   * Triage & closeout CLI utility: `bin/agy_rtc.py` (`triage`, `ungate`).
   * Unit test suite: `tests/test_rtc.py` (100% passing).
-
-#### 🗺️ Roadmap Reprioritization
-* Moved `transcript-distiller` to Phase 4 (lower priority) in favor of core autonomy and hardware offload capabilities.
 
 ---
 
@@ -62,4 +77,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`agy-measure-twice`**: Pre-execution survey skill ensuring agents match real events and inspect platform capabilities before building custom scripts.
 * **`agy-no-hidden-changes`**: Enforces transparent, honest, and reversible file modifications with no phantom edits.
 * **`agy-waypoints`**: Execution lifecycle hooks and stage banner system.
-* **`local-delegate`**: Offline local model offloading skill for Apple MLX / Ollama.

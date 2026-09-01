@@ -29,12 +29,12 @@ This roadmap defines the architectural alignment and step-by-step implementation
 | **Session Continuity / Crash Recovery** | `resume-interrupted` | `packages/agy-resume-interrupted` | ✅ Complete |
 | **Durable Record Reconciliation** | `audit-loose-ends` | `packages/agy-audit-loose-ends` | ✅ Complete |
 | **Autonomous Multi-Step Execution** | `run-to-completion` | `packages/agy-run-to-completion` | ✅ Complete |
-| **Local Model Delegation (MLX)** | `local-agents` | `packages/agy-local-agents` (`skills/local-delegate`) | ⏳ Phase 3 |
-| **MCP Verification & Probe Harness** | `mcp-smoke-test` | `packages/agy-mcp-smoke-test` | ⏳ Phase 3 |
-| **On-Demand Speech / TTS** | `claude-turn-speak` | `packages/agy-turn-speak` | ⏳ Phase 3 |
+| **Local Model Delegation (MLX)** | `local-agents` | `packages/agy-local-delegate` | ✅ Complete |
 | **Transcript Distillation & Capsules** | `claude-code-transcript-distiller` | `packages/agy-transcript-distiller` | ⏳ Phase 4 |
 | **Package Catalog & Auto-Updater** | `get-haiggoh` | `get-antigravity` (`install.py` v2) | ⏳ Phase 4 |
 | **Desktop / IDE MCP Synchronizer** | `claude-code-desktop-sync` | `bin/sync_engine.py` (Desktop MCP module) | ⏳ Phase 4 |
+| **MCP Verification & Probe Harness** | `mcp-smoke-test` | `packages/agy-mcp-smoke-test` | ⏳ Phase 5 |
+| **On-Demand Speech / TTS** | `claude-turn-speak` | `packages/agy-turn-speak` | ⏳ Phase 5 |
 
 ---
 
@@ -64,13 +64,12 @@ This roadmap defines the architectural alignment and step-by-step implementation
   - `close-out-the-run`: Clean wrap and remaining-blocker persistence.
   - Unit tests + CLI tooling (`bin/agy_rtc.py`).
 
-### Phase 3: Hardware Offload, App Probing & Audio Helpers
-- [ ] **`agy-local-agents`** (Skill: `local-delegate`):
-  - Local MLX delegation overlay for Apple Silicon (Qwen / Llama).
-- [ ] **`agy-mcp-smoke-test`** (Skill: `mcp-smoke-test`):
-  - 4-part probe & test harness for app-controlling MCP servers (DaVinci Resolve, Blender, Adobe).
-- [ ] **`agy-turn-speak`** (Skill: `turn-speak`):
-  - macOS `say` and OpenAI TTS integration for hands-free voice workflows.
+### Phase 3: Hardware Offload & Local Intelligence
+- [x] **`agy-local-delegate`** (Skill: `local-delegate`):
+  - Local MLX / OpenAI-compatible model delegation for Apple Silicon (Qwen 2.5/3.6, DeepSeek R1, Gemma 4, Devstral).
+  - Safe file attachments bundling with context overflow guard.
+  - Health check & server probing CLI (`bin/agy_local_delegate.py`).
+  - Unit tests (`tests/test_local_delegate.py`).
 
 ### Phase 4: Suite Distribution, Advanced Distillation & Sync
 - [ ] **`get-antigravity` (Package Hub & Updater)**:
@@ -79,3 +78,9 @@ This roadmap defines the architectural alignment and step-by-step implementation
   - Full bidirectional MCP and config mirror between Antigravity CLI and Desktop / IDE.
 - [ ] **`agy-transcript-distiller`** (Skill: `transcript-distiller`):
   - Distills AGY `transcript.jsonl` into line-addressable, noise-free markdown capsules (low priority).
+
+### Phase 5: App Probing & Audio Helpers (Post-Phase 4)
+- [ ] **`agy-mcp-smoke-test`** (Skill: `mcp-smoke-test`):
+  - 4-part probe & test harness for app-controlling MCP servers (DaVinci Resolve, Blender, Adobe).
+- [ ] **`agy-turn-speak`** (Skill: `turn-speak`):
+  - macOS `say` and OpenAI TTS integration for hands-free voice workflows.
