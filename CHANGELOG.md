@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.3.1] - 2026-09-01
+ 
+### 🚀 Local Architecture Enhancements (`agy-local-delegate`)
+
+#### 🎛️ Interactive Model Selection: `agy-csl`
+* Added `csl`-style interactive model selection picker (`bin/agy-csl`, `agy-local-mode --menu`):
+  * Inspects `~/.models` to display live `[Installed <size> GB ✅]` badges.
+  * Queries local ports `8000–8015` to indicate `[Active Port <port> 🔌]` running servers.
+  * Allows choosing any registered profile or supplying custom model IDs/paths.
+
+#### 🧠 RAM Preflight Safety & Unified Memory Protection
+* Implemented cross-platform RAM preflight engine (`agy_local_delegate.py preflight` / `ram_preflight_check`):
+  * **Zero-RAM short-circuit**: Detects if requested model is already served on ports `8000–8015` and reuses it without allocating duplicate memory.
+  * **Resident size calculation**: Evaluates on-disk model weight size + runtime overhead against live free system RAM (`vm_stat`/`sysctl`).
+  * **16.0 GB Floor**: Enforces a strict safe memory floor to avoid Apple Silicon UI and Terminal freezes.
+
+#### 🔌 Dynamic Port Discovery & Slot Allocation
+* Replaced hardcoded ports with dynamic slot hunting:
+  * Backend auto-discovery across ports `8000–8015` (Rapid-MLX, llama.cpp).
+  * Proxy dynamic slot finder across `9191–9205`, completely eliminating `Address already in use` socket conflicts.
+  * Enabled socket address reuse (`SO_REUSEADDR`) and automatic stale zombie process cleanup.
+
+#### 🧹 Safe Memory Eviction Utility: `agy-evict`
+* Created `bin/agy-evict` (adapted from `la-evict.sh` for AGY):
+  * Discovers all resident local servers (`rapid-mlx`, `llama-server`, `mlx-lm`, `agy-proxy`) with RSS breakdown and uptime.
+  * Protects active attached AGY sessions (`Rank #3`).
+  * Supports `--status`, `--dry-run`, `--all`, `--port <port>`, and single highest-priority candidate eviction (`Rank #0` / `#1`).
+* Symlinked `agy-csl` and `agy-evict` to `~/.local/bin/` via `install.py`.
+
+---
+
 ## [v1.3.0] - 2026-09-01
 
 ### 🚀 Phase 3: Hardware Offload & Local Intelligence

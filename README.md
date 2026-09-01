@@ -55,13 +55,31 @@ python install.py
 
 ## 🧠 Local Apple Silicon Model Offloading (`local-delegate`)
 
-`local-delegate` connects directly to local Rapid-MLX, vLLM-MLX, or OpenAI-compatible endpoints with zero cloud quota usage:
+`local-delegate` connects directly to local Rapid-MLX (for MLX models), llama.cpp (for GGUF), or OpenAI-compatible endpoints with zero cloud quota usage:
 
 * **Default Operator**: `qwen-3.8-operator` (27B 4-bit) & `qwen-3.8-thinking`.
-* **Model Profiles**: `deepseek-r1-architect`, `kat-coder-optiq`, `gemma-4-26b`, `kimi-vl-thinking`, `devstral-2-123b`, `ministral-14b`, `nemotron-omni`, `llama-scout`.
-* **Live On-Disk Scanner**:
+* **Model Profiles (13 total)**: `deepseek-r1-architect`, `kat-coder-optiq`, `gemma-4-26b`, `kimi-vl-thinking`, `devstral-2-123b`, `ministral-14b`, `nemotron-omni`, `llama-scout`.
+* **🎛️ Interactive Model Selection (`agy-csl`)**:
   ```bash
-  python packages/agy-local-delegate/bin/agy_local_delegate.py scan
+  # Launch interactive disk-aware model picker:
+  agy-csl
+  ```
+* **🧠 RAM Preflight Safety**:
+  ```bash
+  # Check if model fits in unified memory before loading:
+  python3 packages/agy-local-delegate/bin/agy_local_delegate.py preflight --model qwen-3.8-operator
+  ```
+* **🧹 Safe Memory Eviction Fallback (`agy-evict`)**:
+  ```bash
+  # Inspect resident model servers, RSS, and safety ranks:
+  agy-evict --status
+
+  # Evict orphaned/idle servers without touching active AGY sessions:
+  agy-evict
+  ```
+* **📦 Live On-Disk Scanner**:
+  ```bash
+  python3 packages/agy-local-delegate/bin/agy_local_delegate.py scan
   ```
 
 ---
