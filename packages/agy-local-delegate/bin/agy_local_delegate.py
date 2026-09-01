@@ -31,6 +31,13 @@ def main():
     check_p = subparsers.add_parser("check", help="Health-check local server")
     check_p.add_argument("--endpoint", default=None, help="Custom server URL")
 
+    # preflight command
+    preflight_p = subparsers.add_parser("preflight", help="Run RAM preflight check before loading model")
+    preflight_p.add_argument("--model", default="qwen-3.8-operator", help="Model alias to check (Default: qwen-3.8-operator)")
+    preflight_p.add_argument("--floor", type=float, default=16.0, help="Floor RAM to preserve in GB (Default: 16)")
+    preflight_p.add_argument("--overhead", type=float, default=6.0, help="Runtime overhead in GB (Default: 6)")
+    preflight_p.add_argument("--dir", default=None, help="Custom models directory")
+
     # dispatch command
     dispatch_p = subparsers.add_parser("dispatch", help="Dispatch prompt to local model")
     dispatch_p.add_argument("--model", default="qwen-3.8-operator", help="Model alias (Default: qwen-3.8-operator)")
@@ -80,6 +87,27 @@ def main():
         else:
             print(f"[-] Local model server OFFLINE at {res['endpoint']}")
             print(f"    Error: {res.get('error')}")
+            sys.exit(1)
+
+    elif args.command == "preflight":
+        res = core.ram_preflight_check(
+            model_alias=args.model,
+            floor_gb=args.floor,
+            overhead_gb=args.overhead,
+            models_dir=args.dir,
+        )
+        if res.get("already_served"):
+            print(f"✅ RAM Preflight: {res['message']}")
+            sys.exit(0)
+        elif res.get("fits"):
+            print(f"✅ RAM Preflight: {res['model_alias']} is SAFE to load.")
+            print(f"   {res['message']}")
+            print(f"   Available: {res['available_gb']} GB | Total: {res['total_gb']} GB | Kept floor: {res['floor_gb']} GB")
+            sys.exit(0)
+        else:
+            print(f"⚠️  RAM Preflight: Loading {res['model_alias']} looks UNSAFE right now!", file=sys.stderr)
+            print(f"   {res['message']}", file=sys.stderr)
+            print(f"   Available: {res['available_gb']} GB | Needs: ~{res['need_gb']} GB (weights {res['weights_gb']} + {res['overhead_gb']} GB overhead)", file=sys.stderr)
             sys.exit(1)
 
     elif args.command == "dispatch":

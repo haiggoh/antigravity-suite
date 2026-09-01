@@ -69,21 +69,83 @@ if [[ ! -f "$PROXY_SCRIPT" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Check if upstream is alive
 # ---------------------------------------------------------------------------
+# 1. RAM Preflight Check (Cheapest first, prevent system lockup)
+# ---------------------------------------------------------------------------
+if [[ "${AGY_SKIP_RAM_PREFLIGHT:-0}" != "1" ]]; then
+    PREFLIGHT_OUT=$(python3 "$SCRIPT_DIR/agy_local_delegate.py" preflight --model "$LOCAL_MODEL" 2>&1 || true)
+    if echo "$PREFLIGHT_OUT" | grep -q "UNSAFE"; then
+        echo "$PREFLIGHT_OUT"
+        echo ""
+        echo "🛑 RAM preflight failed: loading $LOCAL_MODEL may freeze system memory."
+        echo "   Set AGY_SKIP_RAM_PREFLIGHT=1 to bypass if you know what you are doing."
+        exit 1
+    else
+        echo "$PREFLIGHT_OUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Dynamic Upstream Server Discovery (8000-8015)
+# ---------------------------------------------------------------------------
+if [[ "$LOCAL_UPSTREAM" == "http://127.0.0.1:8000/v1" ]]; then
+    # Auto-scan ports 8000-8015 for active model server
+    DISCOVERED_PORT=$(python3 -c "
+import sys, os
+sys.path.insert(0, os.path.dirname('$SCRIPT_DIR'))
+import agy_local_delegate_core as core
+servers = core.find_active_model_servers(8000, 8015)
+if servers:
+    print(servers[0]['port'])
+" 2>/dev/null || true)
+    if [[ -n "$DISCOVERED_PORT" ]]; then
+        LOCAL_UPSTREAM="http://127.0.0.1:${DISCOVERED_PORT}/v1"
+        echo "[agy-local-mode] 🔌 Discovered active inference server on port $DISCOVERED_PORT ($LOCAL_UPSTREAM)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Dynamic Proxy Port Discovery (9191-9205)
+# ---------------------------------------------------------------------------
+if [[ -z "${AGY_LOCAL_PROXY_PORT:-}" ]]; then
+    DYNAMIC_PROXY_PORT=$(python3 -c "
+import sys, os
+sys.path.insert(0, os.path.dirname('$SCRIPT_DIR'))
+import agy_local_delegate_core as core
+# Check if existing proxy is active
+for p in range(9191, 9205):
+    res = core.check_server_health(f'http://127.0.0.1:{p}', timeout=0.3)
+    # Check if proxy health responds
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=0.3) as resp:
+            if resp.status == 200:
+                print(p)
+                sys.exit(0)
+    except Exception:
+        pass
+# Otherwise return first free port
+print(core.find_free_port(9191, 9205))
+" 2>/dev/null || true)
+    if [[ -n "$DYNAMIC_PROXY_PORT" ]]; then
+        PROXY_PORT="$DYNAMIC_PROXY_PORT"
+    fi
+fi
+
 echo "┌─────────────────────────────────────────────────────────┐"
 echo "│  agy-local-mode: Local Model Mode                        │"
 echo "├─────────────────────────────────────────────────────────┤"
-echo "│  Upstream:  $LOCAL_UPSTREAM"
-echo "│  Model:     $LOCAL_MODEL"
-echo "│  Proxy port: $PROXY_PORT"
+echo "│  Upstream:    $LOCAL_UPSTREAM"
+echo "│  Model:       $LOCAL_MODEL"
+echo "│  Proxy Port:  $PROXY_PORT (dynamic free slot)"
 echo "└─────────────────────────────────────────────────────────┘"
 echo ""
 
+# Check if upstream is alive
 if ! curl -sf "${LOCAL_UPSTREAM%/v1}/health" --max-time 2 &>/dev/null && \
    ! curl -sf "${LOCAL_UPSTREAM}/models" --max-time 2 &>/dev/null; then
     echo "[agy-local-mode] ⚠️  WARNING: Local model server not detected at $LOCAL_UPSTREAM"
-    echo "                    Start your Rapid-MLX (for MLX) or llama-server (for GGUF) server first, e.g.:"
+    echo "                    Start Rapid-MLX (MLX) or llama-server (GGUF) first, e.g.:"
     echo "                    ~/.venvs/rapid-mlx-0.12.18/bin/rapid-mlx \\"
     echo "                      --model ~/.models/Qwen3.8-27B-4bit"
     echo ""
@@ -92,12 +154,13 @@ if ! curl -sf "${LOCAL_UPSTREAM%/v1}/health" --max-time 2 &>/dev/null && \
 fi
 
 # ---------------------------------------------------------------------------
-# Check if proxy is already running on target port
+# 4. Proxy Lifecycle & Startup
+# ---------------------------------------------------------------------------
 OWNED_PROXY=0
 if curl -sf "http://127.0.0.1:$PROXY_PORT/health" --max-time 1 &>/dev/null; then
-    echo "[agy-local-mode] Existing proxy already running on port $PROXY_PORT. Reusing..."
+    echo "[agy-local-mode] Existing healthy proxy active on port $PROXY_PORT. Reusing..."
 else
-    # Check if port is occupied by a stale process
+    # Check if port is occupied by a stale non-proxy process
     EXISTING_PID=$(lsof -ti :"$PROXY_PORT" 2>/dev/null || true)
     if [[ -n "$EXISTING_PID" ]]; then
         echo "[agy-local-mode] Cleaning up stale process on port $PROXY_PORT (PID $EXISTING_PID)..."
@@ -106,7 +169,7 @@ else
     fi
 
     PROXY_CMD="python3 $PROXY_SCRIPT --port $PROXY_PORT --upstream $LOCAL_UPSTREAM --model $LOCAL_MODEL --timeout $PROXY_TIMEOUT $PROXY_DEBUG"
-    echo "[agy-local-mode] Starting Gemini→OpenAI proxy..."
+    echo "[agy-local-mode] Starting Gemini→OpenAI proxy on port $PROXY_PORT..."
     $PROXY_CMD &
     PROXY_PID=$!
     OWNED_PROXY=1
@@ -114,11 +177,12 @@ else
     # Wait for proxy to be ready
     WAIT=0
     while ! curl -sf "http://127.0.0.1:$PROXY_PORT/health" --max-time 1 &>/dev/null; do
-        sleep 0.3
+        sleep 0.2
         WAIT=$((WAIT + 1))
-        if [[ $WAIT -gt 20 ]]; then
-            echo "[agy-local-mode] ERROR: Proxy failed to start" >&2
-            kill "$PROXY_PID" 2>/dev/null; exit 1
+        if [[ $WAIT -gt 25 ]]; then
+            echo "[agy-local-mode] ERROR: Proxy failed to start on port $PROXY_PORT" >&2
+            kill "$PROXY_PID" 2>/dev/null || true
+            exit 1
         fi
     done
 fi
@@ -128,7 +192,7 @@ echo "[agy-local-mode] Launching AGY..."
 echo ""
 
 # ---------------------------------------------------------------------------
-# Cleanup on exit
+# 5. Cleanup on exit
 # ---------------------------------------------------------------------------
 cleanup() {
     if [[ "$OWNED_PROXY" -eq 1 && -n "${PROXY_PID:-}" ]]; then
@@ -142,6 +206,6 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# Launch AGY with proxy base URL
+# 6. Launch AGY with proxy base URL
 # ---------------------------------------------------------------------------
 GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:$PROXY_PORT" agy "${AGY_ARGS[@]}"

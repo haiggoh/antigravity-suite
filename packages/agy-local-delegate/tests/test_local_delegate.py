@@ -77,3 +77,29 @@ def test_dispatch_local_prompt_mocked():
         res = core.dispatch_local_prompt("Refactor code", model_alias="qwen-3.8-operator")
         assert res["success"] is True
         assert res["reply"] == "Refactored function successfully."
+
+
+def test_find_free_port():
+    port = core.find_free_port(9500, 9550)
+    assert 9500 <= port <= 9550
+
+
+def test_ram_preflight_check():
+    with patch("agy_local_delegate_core.get_available_system_ram_gb", return_value=(64.0, 128.0)), \
+         patch("agy_local_delegate_core.get_model_weights_size_gb", return_value=15.0), \
+         patch("agy_local_delegate_core.find_active_model_servers", return_value=[]):
+        res = core.ram_preflight_check("qwen-3.8-operator", floor_gb=16.0, overhead_gb=6.0)
+        assert res["fits"] is True
+        assert res["need_gb"] == 21.0
+        assert res["available_gb"] == 64.0
+        assert res["already_served"] is False
+
+
+def test_ram_preflight_already_served():
+    mock_servers = [{"port": 8000, "endpoint": "http://127.0.0.1:8000/v1", "models": ["mlx-community/Qwen3.8-27B-4bit"]}]
+    with patch("agy_local_delegate_core.find_active_model_servers", return_value=mock_servers):
+        res = core.ram_preflight_check("qwen-3.8-operator")
+        assert res["fits"] is True
+        assert res["already_served"] is True
+        assert res["served_port"] == 8000
+
