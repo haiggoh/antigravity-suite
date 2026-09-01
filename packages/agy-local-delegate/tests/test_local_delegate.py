@@ -25,14 +25,38 @@ def test_bundle_file_attachments():
         assert "test2.txt" in bundled
 
 
-def test_build_chat_payload():
+def test_build_chat_payload_default_qwen38():
     payload = core.build_chat_payload(
         prompt="Review database adapter",
-        model_alias="qwen-3.6-operator",
+        model_alias="qwen-3.8-operator",
     )
-    assert payload["model"] == "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit"
+    assert payload["model"] == "mlx-community/Qwen3.8-27B-4bit"
     assert len(payload["messages"]) == 2
     assert payload["messages"][1]["content"] == "Review database adapter"
+
+
+def test_scan_local_models_dir():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create a catalog model directory
+        qwen_dir = os.path.join(tmpdir, "Qwen3.8-27B-4bit")
+        os.makedirs(qwen_dir, exist_ok=True)
+        with open(os.path.join(qwen_dir, "weights.bin"), "w") as f:
+            f.write("mock weights")
+
+        # Create an unregistered model directory
+        custom_dir = os.path.join(tmpdir, "Custom-Experimental-14B")
+        os.makedirs(custom_dir, exist_ok=True)
+        with open(os.path.join(custom_dir, "weights.bin"), "w") as f:
+            f.write("mock custom weights")
+
+        scan = core.scan_local_models_dir(tmpdir)
+        assert scan["exists"] is True
+        installed_aliases = [m["alias"] for m in scan["installed_catalog"]]
+        assert "qwen-3.8-operator" in installed_aliases
+        assert "qwen-3.8-thinking" in installed_aliases
+
+        unregistered_names = [u["name"] for u in scan["unregistered_models"]]
+        assert "Custom-Experimental-14B" in unregistered_names
 
 
 def test_check_server_health_offline():
@@ -42,26 +66,14 @@ def test_check_server_health_offline():
 
 
 def test_dispatch_local_prompt_mocked():
-    mock_response_data = {
-        "choices": [
-            {
-                "message": {
-                    "role": "assistant",
-                    "content": "Refactored function successfully.",
-                }
-            }
-        ],
-        "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
-    }
-
     mock_resp = MagicMock()
     mock_resp.status = 200
-    mock_resp.read.return_value = json_bytes = (
+    mock_resp.read.return_value = (
         '{"choices": [{"message": {"role": "assistant", "content": "Refactored function successfully."}}], "usage": {"prompt_tokens": 50, "completion_tokens": 20}}'
     ).encode("utf-8")
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("urllib.request.urlopen", return_value=mock_resp):
-        res = core.dispatch_local_prompt("Refactor code", model_alias="qwen-3.6-operator")
+        res = core.dispatch_local_prompt("Refactor code", model_alias="qwen-3.8-operator")
         assert res["success"] is True
         assert res["reply"] == "Refactored function successfully."

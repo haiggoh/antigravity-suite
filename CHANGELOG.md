@@ -13,10 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### 📦 New Monorepo Package: `agy-local-delegate`
 * **`agy-local-delegate`** (`packages/agy-local-delegate`, Skill: `local-delegate`):
-  * Offline local model offloading for Apple Silicon (MLX / vLLM-MLX / Ollama / OpenAI-compatible local endpoints).
-  * Pre-configured model profiles: `qwen-3.6-operator` (27B), `qwen-3.6-thinking`, `deepseek-r1-architect`, `gemma-4-26b`, `devstral-2-123b`, and `llama-scout`.
+  * Upgraded default local operator to **Qwen 3.8 27B** (`qwen-3.8-operator`, `qwen-3.8-thinking`, `qwen-3.8-8bit`, `qwen-3.8-mtp`).
+  * Expanded model catalog across 13 registered profiles:
+    * `qwen-3.8-operator` (Default fast 27B coding workhorse)
+    * `qwen-3.8-thinking` (Deep chain-of-thought reasoning)
+    * `qwen-3.8-8bit` (High-precision 8-bit operator)
+    * `qwen-3.8-mtp` (Multi-Token Prediction accelerated operator)
+    * `qwen-80b-thinking` (Heavyweight 80B architecture model)
+    * `deepseek-r1-architect` (DeepSeek R1 logic & architectural reasoning)
+    * `kat-coder-optiq` (KAT Coder V2.5 Dev OptiQ code generation)
+    * `devstral-2-123b` (Heavyweight 123B code refactoring engine)
+    * `gemma-4-26b` (Google Gemma 4 26B instruction & analysis)
+    * `kimi-vl-thinking` (Multimodal vision & reasoning utility)
+    * `ministral-14b` (Fast reasoning & inspection model)
+    * `nemotron-omni` (NVIDIA Nemotron 3 Nano Omni multimodal model)
+    * `llama-scout` (Lightweight classification & utility)
+  * **On-Disk Model Scanner**: Added `scan_local_models_dir` and CLI command (`bin/agy_local_delegate.py scan`) to inspect installed models in `~/.models` with disk usage breakdown.
   * Safe multi-file context bundling with automatic overflow protection (`bundle_file_attachments`).
-  * CLI tool: `bin/agy_local_delegate.py` (`models`, `check`, `dispatch`).
   * Unit test suite: `tests/test_local_delegate.py` (100% passing).
 
 #### 🗺️ Roadmap Update

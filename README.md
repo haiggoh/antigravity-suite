@@ -12,7 +12,7 @@ A modular, production-ready power-user monorepo and configuration synchronizatio
 
 | Package | Skills Provided | Description |
 | :--- | :--- | :--- |
-| [**`agy-local-delegate`**](packages/agy-local-delegate) | `local-delegate` | Offline local model offloading to Apple Silicon MLX / Ollama for zero-quota tasks. |
+| [**`agy-local-delegate`**](packages/agy-local-delegate) | `local-delegate` | Offline local model offloading to Apple Silicon MLX / Rapid (Qwen 3.8, DeepSeek R1, KAT Coder, Gemma 4). |
 | [**`agy-run-to-completion`**](packages/agy-run-to-completion) | `run-to-completion`, `autopilot`, `triage-for-autonomy`, `execute-unattended`, `ungate-queue`, `close-out-the-run` | Autonomous multi-step execution loop, queue scoring, and attended blocker ungating. |
 | [**`agy-brief-agents`**](packages/agy-brief-agents) | `brief-agents` | Compiles global rules & workspace conventions into a compact briefing index for delegated subagents. |
 | [**`agy-resume-interrupted`**](packages/agy-resume-interrupted) | `resume-interrupted` | Detects rate-limited, stalled, or crashed prior sessions and formats exact continuation prompts. |
@@ -53,6 +53,19 @@ python install.py
 
 ---
 
+## 🧠 Local Apple Silicon Model Offloading (`local-delegate`)
+
+`local-delegate` connects directly to local Rapid-MLX, vLLM-MLX, or OpenAI-compatible endpoints with zero cloud quota usage:
+
+* **Default Operator**: `qwen-3.8-operator` (27B 4-bit) & `qwen-3.8-thinking`.
+* **Model Profiles**: `deepseek-r1-architect`, `kat-coder-optiq`, `gemma-4-26b`, `kimi-vl-thinking`, `devstral-2-123b`, `ministral-14b`, `nemotron-omni`, `llama-scout`.
+* **Live On-Disk Scanner**:
+  ```bash
+  python packages/agy-local-delegate/bin/agy_local_delegate.py scan
+  ```
+
+---
+
 ## 🔄 Universal Multi-Device Sync
 
 The synchronization engine (`bin/sync_engine.py`) is completely platform-agnostic:
@@ -75,7 +88,7 @@ antigravity-suite/
 │   ├── sync_engine.py          # Core configuration and workspace engine
 │   └── sync_standalone_fork.py # Bi-directional package / fork synchronizer
 ├── packages/                   # Monorepo packages (agy-*)
-│   ├── agy-local-delegate/     # Apple Silicon MLX local model offloading
+│   ├── agy-local-delegate/     # Apple Silicon MLX local model offloading (Qwen 3.8, DeepSeek R1, KAT)
 │   ├── agy-run-to-completion/  # Autonomous execution & ungate engine (6 skills)
 │   ├── agy-brief-agents/       # Subagent briefing index & rule injector
 │   ├── agy-resume-interrupted/ # Interrupted session detector & resumer
