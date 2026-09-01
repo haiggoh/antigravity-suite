@@ -92,24 +92,36 @@ if ! curl -sf "${LOCAL_UPSTREAM%/v1}/health" --max-time 2 &>/dev/null && \
 fi
 
 # ---------------------------------------------------------------------------
-# Start the proxy
-# ---------------------------------------------------------------------------
-PROXY_CMD="python3 $PROXY_SCRIPT --port $PROXY_PORT --upstream $LOCAL_UPSTREAM --model $LOCAL_MODEL --timeout $PROXY_TIMEOUT $PROXY_DEBUG"
-
-echo "[agy-local-mode] Starting Gemini→OpenAI proxy..."
-$PROXY_CMD &
-PROXY_PID=$!
-
-# Wait for proxy to be ready
-WAIT=0
-while ! curl -sf "http://127.0.0.1:$PROXY_PORT/health" --max-time 1 &>/dev/null; do
-    sleep 0.3
-    WAIT=$((WAIT + 1))
-    if [[ $WAIT -gt 20 ]]; then
-        echo "[agy-local-mode] ERROR: Proxy failed to start" >&2
-        kill "$PROXY_PID" 2>/dev/null; exit 1
+# Check if proxy is already running on target port
+OWNED_PROXY=0
+if curl -sf "http://127.0.0.1:$PROXY_PORT/health" --max-time 1 &>/dev/null; then
+    echo "[agy-local-mode] Existing proxy already running on port $PROXY_PORT. Reusing..."
+else
+    # Check if port is occupied by a stale process
+    EXISTING_PID=$(lsof -ti :"$PROXY_PORT" 2>/dev/null || true)
+    if [[ -n "$EXISTING_PID" ]]; then
+        echo "[agy-local-mode] Cleaning up stale process on port $PROXY_PORT (PID $EXISTING_PID)..."
+        kill -9 "$EXISTING_PID" 2>/dev/null || true
+        sleep 0.5
     fi
-done
+
+    PROXY_CMD="python3 $PROXY_SCRIPT --port $PROXY_PORT --upstream $LOCAL_UPSTREAM --model $LOCAL_MODEL --timeout $PROXY_TIMEOUT $PROXY_DEBUG"
+    echo "[agy-local-mode] Starting Gemini→OpenAI proxy..."
+    $PROXY_CMD &
+    PROXY_PID=$!
+    OWNED_PROXY=1
+
+    # Wait for proxy to be ready
+    WAIT=0
+    while ! curl -sf "http://127.0.0.1:$PROXY_PORT/health" --max-time 1 &>/dev/null; do
+        sleep 0.3
+        WAIT=$((WAIT + 1))
+        if [[ $WAIT -gt 20 ]]; then
+            echo "[agy-local-mode] ERROR: Proxy failed to start" >&2
+            kill "$PROXY_PID" 2>/dev/null; exit 1
+        fi
+    done
+fi
 
 echo "[agy-local-mode] Proxy ready on port $PROXY_PORT"
 echo "[agy-local-mode] Launching AGY..."
@@ -119,11 +131,13 @@ echo ""
 # Cleanup on exit
 # ---------------------------------------------------------------------------
 cleanup() {
-    echo ""
-    echo "[agy-local-mode] Stopping proxy (PID $PROXY_PID)..."
-    kill "$PROXY_PID" 2>/dev/null || true
-    wait "$PROXY_PID" 2>/dev/null || true
-    echo "[agy-local-mode] Done."
+    if [[ "$OWNED_PROXY" -eq 1 && -n "${PROXY_PID:-}" ]]; then
+        echo ""
+        echo "[agy-local-mode] Stopping proxy (PID $PROXY_PID)..."
+        kill "$PROXY_PID" 2>/dev/null || true
+        wait "$PROXY_PID" 2>/dev/null || true
+        echo "[agy-local-mode] Done."
+    fi
 }
 trap cleanup EXIT INT TERM
 

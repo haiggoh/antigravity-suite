@@ -303,6 +303,7 @@ def main():
     GeminiToOpenAIHandler.timeout = args.timeout
     GeminiToOpenAIHandler.debug = args.debug
 
+    HTTPServer.allow_reuse_address = True
     server = HTTPServer(("127.0.0.1", args.port), GeminiToOpenAIHandler)
 
     print(f"┌─────────────────────────────────────────────────────────┐")
