@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# ============================================================================
+# agy-local-mode — Launch AGY with a local model as the main engine
+#
+# This script:
+#   1. Starts the agy-local-proxy (Gemini→OpenAI translation layer)
+#   2. Sets GOOGLE_GEMINI_BASE_URL to point AGY at the proxy
+#   3. Launches AGY in interactive mode
+#   4. Cleans up the proxy when AGY exits
+#
+# Usage:
+#   agy-local-mode [--model <model-id>] [--upstream <url>] [--port <port>] [AGY_ARGS...]
+#
+# Examples:
+#   # Default: Qwen 3.8 on port 8000 (Rapid-MLX default)
+#   agy-local-mode
+#
+#   # Specific model and upstream
+#   agy-local-mode --model mlx-community/Qwen3.8-27B-4bit --upstream http://127.0.0.1:8000/v1
+#
+#   # Pass additional AGY flags
+#   agy-local-mode --continue
+#   agy-local-mode --mode plan
+# ============================================================================
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Defaults (can be overridden by env vars or flags)
+# ---------------------------------------------------------------------------
+PROXY_PORT="${AGY_LOCAL_PROXY_PORT:-9191}"
+LOCAL_UPSTREAM="${AGY_LOCAL_MODEL_ENDPOINT:-http://127.0.0.1:8000/v1}"
+LOCAL_MODEL="${AGY_LOCAL_MODEL_ID:-mlx-community/Qwen3.8-27B-4bit}"
+PROXY_TIMEOUT="${AGY_LOCAL_PROXY_TIMEOUT:-180}"
+PROXY_DEBUG="${AGY_LOCAL_PROXY_DEBUG:-}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROXY_SCRIPT="$SCRIPT_DIR/agy_local_proxy.py"
+
+# ---------------------------------------------------------------------------
+# Parse local flags (strip before passing remainder to agy)
+# ---------------------------------------------------------------------------
+AGY_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --model)    LOCAL_MODEL="$2"; shift 2 ;;
+        --upstream) LOCAL_UPSTREAM="$2"; shift 2 ;;
+        --port)     PROXY_PORT="$2"; shift 2 ;;
+        --timeout)  PROXY_TIMEOUT="$2"; shift 2 ;;
+        --debug)    PROXY_DEBUG="--debug"; shift ;;
+        *)          AGY_ARGS+=("$1"); shift ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# Check prerequisites
+# ---------------------------------------------------------------------------
+if ! command -v python3 &>/dev/null; then
+    echo "[agy-local-mode] ERROR: python3 not found" >&2
+    exit 1
+fi
+if ! command -v agy &>/dev/null; then
+    echo "[agy-local-mode] ERROR: agy CLI not found" >&2
+    exit 1
+fi
+if [[ ! -f "$PROXY_SCRIPT" ]]; then
+    echo "[agy-local-mode] ERROR: proxy script not found at $PROXY_SCRIPT" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Check if upstream is alive
+# ---------------------------------------------------------------------------
+echo "┌─────────────────────────────────────────────────────────┐"
+echo "│  agy-local-mode: Local Model Mode                        │"
+echo "├─────────────────────────────────────────────────────────┤"
+echo "│  Upstream:  $LOCAL_UPSTREAM"
+echo "│  Model:     $LOCAL_MODEL"
+echo "│  Proxy port: $PROXY_PORT"
+echo "└─────────────────────────────────────────────────────────┘"
+echo ""
+
+if ! curl -sf "${LOCAL_UPSTREAM%/v1}/health" --max-time 2 &>/dev/null && \
+   ! curl -sf "${LOCAL_UPSTREAM}/models" --max-time 2 &>/dev/null; then
+    echo "[agy-local-mode] ⚠️  WARNING: Local model server not detected at $LOCAL_UPSTREAM"
+    echo "                    Start your Rapid-MLX / vLLM-MLX server first, e.g.:"
+    echo "                    ~/.venvs/rapid-mlx-0.12.18/bin/rapid-mlx \\"
+    echo "                      --model ~/.models/Qwen3.8-27B-4bit"
+    echo ""
+    read -r -p "Continue anyway? [y/N] " CONFIRM
+    [[ "${CONFIRM:-N}" =~ ^[Yy]$ ]] || exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Start the proxy
+# ---------------------------------------------------------------------------
+PROXY_CMD="python3 $PROXY_SCRIPT --port $PROXY_PORT --upstream $LOCAL_UPSTREAM --model $LOCAL_MODEL --timeout $PROXY_TIMEOUT $PROXY_DEBUG"
+
+echo "[agy-local-mode] Starting Gemini→OpenAI proxy..."
+$PROXY_CMD &
+PROXY_PID=$!
+
+# Wait for proxy to be ready
+WAIT=0
+while ! curl -sf "http://127.0.0.1:$PROXY_PORT/health" --max-time 1 &>/dev/null; do
+    sleep 0.3
+    WAIT=$((WAIT + 1))
+    if [[ $WAIT -gt 20 ]]; then
+        echo "[agy-local-mode] ERROR: Proxy failed to start" >&2
+        kill "$PROXY_PID" 2>/dev/null; exit 1
+    fi
+done
+
+echo "[agy-local-mode] Proxy ready on port $PROXY_PORT"
+echo "[agy-local-mode] Launching AGY..."
+echo ""
+
+# ---------------------------------------------------------------------------
+# Cleanup on exit
+# ---------------------------------------------------------------------------
+cleanup() {
+    echo ""
+    echo "[agy-local-mode] Stopping proxy (PID $PROXY_PID)..."
+    kill "$PROXY_PID" 2>/dev/null || true
+    wait "$PROXY_PID" 2>/dev/null || true
+    echo "[agy-local-mode] Done."
+}
+trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Launch AGY with proxy base URL
+# ---------------------------------------------------------------------------
+GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:$PROXY_PORT" agy "${AGY_ARGS[@]}"

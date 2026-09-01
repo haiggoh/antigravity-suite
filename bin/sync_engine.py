@@ -272,6 +272,7 @@ def sync_skills_and_packages(repo_root: str, dry_run: bool = False) -> None:
             # Make bin scripts executable on POSIX
             pkg_bin = os.path.join(pkg_path, "bin")
             if sys.platform != "win32" and os.path.isdir(pkg_bin):
+                local_bin = os.path.join(get_home_dir(), ".local", "bin")
                 for b_file in os.listdir(pkg_bin):
                     b_path = os.path.join(pkg_bin, b_file)
                     if os.path.isfile(b_path):
@@ -279,6 +280,20 @@ def sync_skills_and_packages(repo_root: str, dry_run: bool = False) -> None:
                             os.chmod(b_path, 0o755)
                         except Exception:
                             pass
+                        # Symlink shell scripts (no extension, not prefixed with _ or .) to ~/.local/bin
+                        _, ext = os.path.splitext(b_file)
+                        if ext == "" and not b_file.startswith(("_", ".")):
+                            link_dest = os.path.join(local_bin, b_file)
+                            try:
+                                os.makedirs(local_bin, exist_ok=True)
+                                if os.path.islink(link_dest):
+                                    os.unlink(link_dest)
+                                if not os.path.exists(link_dest):
+                                    os.symlink(b_path, link_dest)
+                                    if not dry_run:
+                                        print(f"[+] Linked CLI tool: {b_file} -> {link_dest}")
+                            except Exception:
+                                pass
 
 
 def sync_statusline(statusline_dir: str, dry_run: bool = False) -> None:
