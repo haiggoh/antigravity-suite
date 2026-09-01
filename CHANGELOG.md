@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.1.0] - 2026-09-01
+
+### 🚀 Phase 1: Core Session Continuity & Delegation Intelligence
+
+#### 📦 New Monorepo Packages
+* **`agy-brief-agents`** (`packages/agy-brief-agents`):
+  * Compiles global rules (`~/.gemini/config/rules/`), workspace `GEMINI.md`, and custom skills into a compact single-line gist index (`~/.gemini/agent-briefing-index.md`).
+  * Prevents delegated subagents from violating workspace rules or conventions they don't automatically inherit.
+  * Fast SHA-256 fingerprint caching and prompt injection wrapper CLI (`bin/agy_brief_agents.py`).
+  * Accompanying skill: `skills/brief-agents/SKILL.md`.
+* **`agy-resume-interrupted`** (`packages/agy-resume-interrupted`):
+  * Scans Antigravity conversation transcripts in `~/.gemini/antigravity-cli/brain/` for interrupted trajectories.
+  * Accurately detects quota limits / 429 errors (`limit_kill`), stalled turns (`stalled_turn`), and unhandled tool crashes.
+  * Generates structured resumption summaries and continuation prompts via CLI (`bin/agy_resume_interrupted.py`).
+  * Accompanying skill: `skills/resume-interrupted/SKILL.md`.
+* **`agy-audit-loose-ends`** (`packages/agy-audit-loose-ends`):
+  * End-of-task reconciliation engine for waypoints, open task items in `GEMINI.md`, and workspace notes.
+  * Scans files for exposed API credentials (Google, Anthropic, OpenAI, GitHub, Slack) and provides atomic secret redaction (`bin/agy_audit_loose_ends.py redact`).
+  * Accompanying skill: `skills/audit-loose-ends/SKILL.md`.
+
+#### 🔄 Sync Engine & Distribution Upgrades
+* **Dynamic Package Discovery**: `bin/sync_engine.py` now automatically discovers and deploys package skills and rules from `packages/*/skills/` and `packages/*/rules/` into `~/.gemini/` without manual path wiring.
+* **Auto-Chmod Executables**: Ensures all package CLI binaries in `packages/*/bin/` receive executable permissions on POSIX systems.
+
+#### 📖 Documentation & Roadmap
+* **`docs/ROADMAP.md`**: Detailed 4-phase architectural roadmap mapping Claude Code `get-haiggoh` plugins to Antigravity Suite.
+
+---
+
 ## [v1.0.0] - 2026-08-25
 
 ### 🚀 Initial Public Release
