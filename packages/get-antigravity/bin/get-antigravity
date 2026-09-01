@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Wrapper for get-antigravity CLI
+# Executes the Python script with any provided arguments.
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+exec "$DIR/get_antigravity.py" "$@"

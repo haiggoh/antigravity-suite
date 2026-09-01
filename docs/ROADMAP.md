@@ -33,8 +33,8 @@ This roadmap defines the architectural alignment and step-by-step implementation
 | **Transcript Distillation & Capsules** | `claude-code-transcript-distiller` | `packages/agy-transcript-distiller` | ⏳ Phase 4 |
 | **Package Catalog & Auto-Updater** | `get-haiggoh` | `get-antigravity` (`install.py` v2) | ⏳ Phase 4 |
 | **Desktop / IDE MCP Synchronizer** | `claude-code-desktop-sync` | `bin/sync_engine.py` (Desktop MCP module) | ⏳ Phase 4 |
-| **MCP Verification & Probe Harness** | `mcp-smoke-test` | `packages/agy-mcp-smoke-test` | ⏳ Phase 5 |
-| **On-Demand Speech / TTS** | `claude-turn-speak` | `packages/agy-turn-speak` | ⏳ Phase 5 |
+| **MCP Verification & Probe Harness** | `mcp-smoke-test` | `packages/agy-mcp-smoke-test` | ⏳ Tabled |
+| **On-Demand Speech / TTS** | `claude-turn-speak` | `packages/agy-turn-speak` | ⏳ Tabled |
 
 ---
 
