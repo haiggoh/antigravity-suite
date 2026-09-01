@@ -12,6 +12,10 @@ LAUNCHER="$SCRIPT_DIR/agy-local-mode"
 
 if [[ $# -eq 0 ]]; then
     exec "$LAUNCHER" --menu
+elif [[ "$1" != -* ]]; then
+    MODEL="$1"
+    shift
+    exec "$LAUNCHER" --model "$MODEL" "$@"
 else
     exec "$LAUNCHER" "$@"
 fi

@@ -121,6 +121,126 @@ MODEL_CATALOG = {
 }
 
 
+def resolve_model_reference(model: str, models_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Resolve a catalog alias, model ID, or local path without losing custom values."""
+    requested = (model or "qwen-3.8-operator").strip()
+    info = MODEL_CATALOG.get(requested)
+    target_dir = models_dir or get_models_dir()
+
+    if info:
+        subdir = info.get("subdir", "")
+        local_path = os.path.join(target_dir, subdir) if subdir else ""
+        installed = bool(local_path and os.path.isdir(local_path))
+        return {
+            "requested": requested,
+            "alias": requested,
+            "model_id": info["default_model_id"],
+            "subdir": subdir,
+            "local_path": local_path if installed else "",
+            "serve_arg": local_path if installed else info["default_model_id"],
+            "installed": installed,
+        }
+
+    expanded = os.path.abspath(os.path.expanduser(requested)) if requested.startswith(("~", ".", "/")) else requested
+    is_local = os.path.isdir(expanded)
+    model_id = os.path.basename(expanded.rstrip(os.sep)) if is_local else requested
+    return {
+        "requested": requested,
+        "alias": requested,
+        "model_id": model_id,
+        "subdir": os.path.basename(expanded.rstrip(os.sep)) if is_local else "",
+        "local_path": expanded if is_local else "",
+        "serve_arg": expanded if is_local else requested,
+        "installed": is_local,
+    }
+
+
+def _normalized_model_names(value: str) -> set:
+    """Return conservative normalized forms used to compare served model names."""
+    if not value:
+        return set()
+    raw = str(value).strip().rstrip("/")
+    forms = {raw.casefold(), os.path.basename(raw).casefold()}
+    # Rapid-MLX aliases commonly differ only in punctuation/case from HF IDs.
+    for item in list(forms):
+        forms.add(re.sub(r"[^a-z0-9]+", "", item))
+    return {item for item in forms if item}
+
+
+def model_names_match(served: str, requested: str) -> bool:
+    """Conservatively compare an API model name with an alias/ID/path."""
+    if not served or str(served).casefold() == "default":
+        return False
+    resolved = resolve_model_reference(requested)
+    candidates = {
+        requested,
+        resolved.get("alias", ""),
+        resolved.get("model_id", ""),
+        resolved.get("subdir", ""),
+        resolved.get("local_path", ""),
+        resolved.get("serve_arg", ""),
+    }
+    served_forms = _normalized_model_names(served)
+    return any(served_forms & _normalized_model_names(candidate) for candidate in candidates if candidate)
+
+
+def find_matching_model_server(
+    model: str,
+    start_port: int = 8000,
+    end_port: int = 8015,
+) -> Optional[Dict[str, Any]]:
+    """Return an active server only when it advertises the requested model."""
+    for server in find_active_model_servers(start_port, end_port):
+        for served_model in server.get("models", []):
+            if model_names_match(served_model, model):
+                result = dict(server)
+                result["matched_model"] = served_model
+                return result
+    return None
+
+
+def get_server_model(endpoint: str, requested: Optional[str] = None, timeout: float = 2.0) -> Optional[str]:
+    """Return the requested matching model, or the first advertised model."""
+    health = check_server_health(endpoint, timeout=timeout)
+    if not health.get("online"):
+        return None
+    models = [m for m in health.get("available_models", []) if m]
+    if requested:
+        for model in models:
+            if model_names_match(model, requested):
+                return model
+    return models[0] if models else None
+
+
+def smoke_test_gemini_proxy(
+    base_url: str,
+    timeout: float = 60.0,
+    prompt: str = "Reply with the single word LOCAL.",
+) -> Dict[str, Any]:
+    """Run one non-streaming inference request through the Gemini proxy."""
+    url = f"{base_url.rstrip('/')}/v1beta/models/local:generateContent"
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0, "maxOutputTokens": 8},
+    }
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "x-goog-api-key": "local"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        parts = body.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
+        has_function_call = any(isinstance(part, dict) and "functionCall" in part for part in parts)
+        if not text and not has_function_call:
+            return {"success": False, "error": "Proxy returned no text or function call"}
+        return {"success": True, "reply": text, "response": body}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 def get_endpoint_url() -> str:
     """Return local OpenAI-compatible API base URL."""
     return os.environ.get("AGY_LOCAL_MODEL_ENDPOINT", DEFAULT_ENDPOINT).rstrip("/")
@@ -133,7 +253,7 @@ def get_models_dir() -> str:
 
 def check_server_health(endpoint: Optional[str] = None, timeout: float = 2.0) -> Dict[str, Any]:
     """Health check local inference server."""
-    base_url = endpoint or get_endpoint_url()
+    base_url = (endpoint or get_endpoint_url()).rstrip("/")
     models_url = f"{base_url}/models"
     try:
         req = urllib.request.Request(models_url, headers={"User-Agent": "Antigravity-Local-Delegate"})
@@ -254,8 +374,8 @@ def build_chat_payload(
     max_tokens: int = 4096,
 ) -> Dict[str, Any]:
     """Construct OpenAI-compatible chat completion request payload."""
-    alias_info = MODEL_CATALOG.get(model_alias, MODEL_CATALOG["qwen-3.8-operator"])
-    model_id = alias_info["default_model_id"]
+    resolved = resolve_model_reference(model_alias)
+    model_id = resolved["model_id"]
 
     context_text = bundle_file_attachments(files or [])
     full_user_content = prompt + context_text
@@ -291,7 +411,7 @@ def dispatch_local_prompt(
                 "preflight": preflight,
             }
 
-    base_url = endpoint or get_endpoint_url()
+    base_url = (endpoint or get_endpoint_url()).rstrip("/")
     completions_url = f"{base_url}/chat/completions"
     payload = build_chat_payload(prompt, model_alias=model_alias, files=files)
 
@@ -398,7 +518,7 @@ def find_free_port(start_port: int = 8000, max_port: int = 8050) -> int:
                 return port
             except OSError:
                 continue
-    return start_port
+    return 0
 
 
 def find_active_model_servers(start_port: int = 8000, end_port: int = 8015) -> List[Dict[str, Any]]:
@@ -419,13 +539,11 @@ def find_active_model_servers(start_port: int = 8000, end_port: int = 8015) -> L
 def get_model_weights_size_gb(model_alias: str, models_dir: Optional[str] = None) -> float:
     """Estimate on-disk weight size in GB for a registered model alias."""
     target_dir = models_dir or get_models_dir()
-    info = MODEL_CATALOG.get(model_alias, {})
-    subdir = info.get("subdir", "")
-    if subdir:
-        model_path = os.path.join(target_dir, subdir)
-        if os.path.isdir(model_path):
-            return get_directory_size_gb(model_path)
-    return 14.0  # Safe default 4-bit 27B estimation
+    resolved = resolve_model_reference(model_alias, models_dir=target_dir)
+    model_path = resolved.get("local_path", "")
+    if model_path and os.path.isdir(model_path):
+        return get_directory_size_gb(model_path)
+    return 14.0  # Conservative fallback when weights are not available locally.
 
 
 def ram_preflight_check(
@@ -450,7 +568,7 @@ def ram_preflight_check(
         active_servers = find_active_model_servers(start_port=8000, end_port=8015)
         for s in active_servers:
             models = s.get("models", [])
-            if any(m == target_id or m == target_subdir or m == model_alias for m in models):
+            if any(model_names_match(m, model_alias) or m == target_id or m == target_subdir or m == model_alias for m in models):
                 return {
                     "fits": True,
                     "already_served": True,
@@ -658,4 +776,3 @@ def evict_servers(
                 })
 
     return results
-

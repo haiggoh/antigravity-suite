@@ -1,228 +1,309 @@
 #!/usr/bin/env bash
-# ============================================================================
-# agy-local-mode — Launch AGY with a local model as the main engine
-#
-# This script:
-#   1. Starts the agy-local-proxy (Gemini→OpenAI translation layer)
-#   2. Sets GOOGLE_GEMINI_BASE_URL to point AGY at the proxy
-#   3. Launches AGY in interactive mode
-#   4. Cleans up the proxy when AGY exits
-#
-# Usage:
-#   agy-local-mode [--model <model-id>] [--upstream <url>] [--port <port>] [AGY_ARGS...]
-#
-# Examples:
-#   # Default: Qwen 3.8 on port 8000 (Rapid-MLX default)
-#   agy-local-mode
-#
-#   # Specific model and upstream
-#   agy-local-mode --model mlx-community/Qwen3.8-27B-4bit --upstream http://127.0.0.1:8000/v1
-#
-#   # Pass additional AGY flags
-#   agy-local-mode --continue
-#   agy-local-mode --mode plan
-# ============================================================================
-
+# agy-local-mode — launch AGY through a local Rapid-MLX model and Gemini proxy.
 set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# Defaults (can be overridden by env vars or flags)
-# ---------------------------------------------------------------------------
-PROXY_PORT="${AGY_LOCAL_PROXY_PORT:-9191}"
-LOCAL_UPSTREAM="${AGY_LOCAL_MODEL_ENDPOINT:-http://127.0.0.1:8000/v1}"
-LOCAL_MODEL="${AGY_LOCAL_MODEL_ID:-}"
-PROXY_TIMEOUT="${AGY_LOCAL_PROXY_TIMEOUT:-180}"
-PROXY_DEBUG="${AGY_LOCAL_PROXY_DEBUG:-}"
-FORCE_MENU=0
+resolve_script_dir() {
+    local source_path="${BASH_SOURCE[0]}"
+    while [[ -L "$source_path" ]]; do
+        local source_dir
+        source_dir="$(cd -P "$(dirname "$source_path")" >/dev/null 2>&1 && pwd)"
+        source_path="$(readlink "$source_path")"
+        [[ "$source_path" != /* ]] && source_path="$source_dir/$source_path"
+    done
+    cd -P "$(dirname "$source_path")" >/dev/null 2>&1 && pwd
+}
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(resolve_script_dir)"
+DELEGATE_SCRIPT="$SCRIPT_DIR/agy_local_delegate.py"
 PROXY_SCRIPT="$SCRIPT_DIR/agy_local_proxy.py"
+CORE_DIR="$SCRIPT_DIR"
+[[ -f "$CORE_DIR/agy_local_delegate_core.py" ]] || CORE_DIR="$(dirname "$SCRIPT_DIR")"
 
-# ---------------------------------------------------------------------------
-# Parse local flags (strip before passing remainder to agy)
-# ---------------------------------------------------------------------------
+LOCAL_MODEL="${AGY_LOCAL_MODEL_ID:-qwen-3.8-operator}"
+LOCAL_UPSTREAM="${AGY_LOCAL_MODEL_ENDPOINT:-}"
+PROXY_PORT="${AGY_LOCAL_PROXY_PORT:-}"
+PROXY_TIMEOUT="${AGY_LOCAL_PROXY_TIMEOUT:-180}"
+SERVER_TIMEOUT="${AGY_LOCAL_SERVER_STARTUP_TIMEOUT:-900}"
+FORCE_MENU=0
+UPSTREAM_EXPLICIT=0
+[[ -n "$LOCAL_UPSTREAM" ]] && UPSTREAM_EXPLICIT=1
 AGY_ARGS=()
+
+need_value() {
+    if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "[agy-local-mode] ERROR: $1 requires a value" >&2
+        exit 2
+    fi
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --model)    LOCAL_MODEL="$2"; shift 2 ;;
-        --menu|-m)  FORCE_MENU=1; shift ;;
-        --upstream) LOCAL_UPSTREAM="$2"; shift 2 ;;
-        --port)     PROXY_PORT="$2"; shift 2 ;;
-        --timeout)  PROXY_TIMEOUT="$2"; shift 2 ;;
-        --debug)    PROXY_DEBUG="--debug"; shift ;;
-        *)          AGY_ARGS+=("$1"); shift ;;
+        --model) need_value "$@"; LOCAL_MODEL="$2"; shift 2 ;;
+        --menu|-m) FORCE_MENU=1; shift ;;
+        --upstream) need_value "$@"; LOCAL_UPSTREAM="$2"; UPSTREAM_EXPLICIT=1; shift 2 ;;
+        --port) need_value "$@"; PROXY_PORT="$2"; shift 2 ;;
+        --timeout) need_value "$@"; PROXY_TIMEOUT="$2"; shift 2 ;;
+        --debug) export AGY_LOCAL_PROXY_DEBUG=1; shift ;;
+        --) shift; AGY_ARGS+=("$@"); break ;;
+        *) AGY_ARGS+=("$1"); shift ;;
     esac
 done
 
-# ---------------------------------------------------------------------------
-# Check prerequisites
-# ---------------------------------------------------------------------------
-if ! command -v python3 &>/dev/null; then
-    echo "[agy-local-mode] ERROR: python3 not found" >&2
-    exit 1
-fi
-if ! command -v agy &>/dev/null; then
-    echo "[agy-local-mode] ERROR: agy CLI not found" >&2
-    exit 1
-fi
-if [[ ! -f "$PROXY_SCRIPT" ]]; then
-    echo "[agy-local-mode] ERROR: proxy script not found at $PROXY_SCRIPT" >&2
-    exit 1
-fi
+for command_name in python3 agy; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "[agy-local-mode] ERROR: $command_name not found" >&2
+        exit 1
+    fi
+done
+for required_file in "$DELEGATE_SCRIPT" "$PROXY_SCRIPT" "$CORE_DIR/agy_local_delegate_core.py"; do
+    if [[ ! -f "$required_file" ]]; then
+        echo "[agy-local-mode] ERROR: required file not found: $required_file" >&2
+        exit 1
+    fi
+done
 
-# ---------------------------------------------------------------------------
-# Model Selection Menu (csl interactive picker)
-# ---------------------------------------------------------------------------
-if [[ "$FORCE_MENU" -eq 1 ]] || [[ -z "$LOCAL_MODEL" && -t 0 && "${AGY_NO_MENU:-0}" != "1" ]]; then
-    CHOSEN_MODEL=$(python3 "$SCRIPT_DIR/agy_local_delegate.py" menu)
-    if [[ -z "$CHOSEN_MODEL" ]]; then
+if [[ "$FORCE_MENU" -eq 1 ]]; then
+    if ! CHOSEN_MODEL=$(python3 "$DELEGATE_SCRIPT" menu); then
         echo "[agy-local-mode] Selection cancelled."
         exit 0
     fi
+    [[ -n "$CHOSEN_MODEL" ]] || { echo "[agy-local-mode] Selection cancelled."; exit 0; }
     LOCAL_MODEL="$CHOSEN_MODEL"
 fi
 
-# Fallback default if still empty (e.g. non-interactive script call)
-LOCAL_MODEL="${LOCAL_MODEL:-mlx-community/Qwen3.8-27B-4bit}"
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# 1. RAM Preflight Check (Cheapest first, prevent system lockup)
-# ---------------------------------------------------------------------------
-if [[ "${AGY_SKIP_RAM_PREFLIGHT:-0}" != "1" ]]; then
-    PREFLIGHT_OUT=$(python3 "$SCRIPT_DIR/agy_local_delegate.py" preflight --model "$LOCAL_MODEL" 2>&1 || true)
-    if echo "$PREFLIGHT_OUT" | grep -q "UNSAFE"; then
-        echo "$PREFLIGHT_OUT"
-        echo ""
-        echo "🛑 RAM preflight failed: loading $LOCAL_MODEL may freeze system memory."
-        echo "   Set AGY_SKIP_RAM_PREFLIGHT=1 to bypass if you know what you are doing."
+# AGY honors GOOGLE_GEMINI_BASE_URL only with its Gemini API-key provider.
+if [[ "${AGY_LOCAL_SKIP_PROVIDER_CHECK:-0}" != "1" ]]; then
+    SETTINGS_PATH="${AGY_SETTINGS_PATH:-$HOME/.gemini/antigravity-cli/settings.json}"
+    if ! python3 - "$SETTINGS_PATH" <<'PY_PROVIDER'
+import json, os, sys
+path = os.path.expanduser(sys.argv[1])
+try:
+    with open(path, encoding="utf-8") as handle:
+        settings = json.load(handle)
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if settings.get("modelProvider") == "gemini" else 1)
+PY_PROVIDER
+    then
+        echo "[agy-local-mode] ERROR: AGY is not configured for its Gemini custom-endpoint provider." >&2
+        echo "  Preserve your other settings, but add this to $SETTINGS_PATH:" >&2
+        echo '  { "modelProvider": "gemini" }' >&2
+        echo "  Without this, AGY can bypass the local proxy and consume cloud quota." >&2
         exit 1
-    else
-        echo "$PREFLIGHT_OUT"
     fi
 fi
 
-# ---------------------------------------------------------------------------
-# 2. Dynamic Upstream Server Discovery (8000-8015)
-# ---------------------------------------------------------------------------
-if [[ "$LOCAL_UPSTREAM" == "http://127.0.0.1:8000/v1" ]]; then
-    # Auto-scan ports 8000-8015 for active model server
-    DISCOVERED_PORT=$(python3 -c "
-import sys, os
-sys.path.insert(0, os.path.dirname('$SCRIPT_DIR'))
-import agy_local_delegate_core as core
-servers = core.find_active_model_servers(8000, 8015)
-if servers:
-    print(servers[0]['port'])
-" 2>/dev/null || true)
-    if [[ -n "$DISCOVERED_PORT" ]]; then
-        LOCAL_UPSTREAM="http://127.0.0.1:${DISCOVERED_PORT}/v1"
-        echo "[agy-local-mode] 🔌 Discovered active inference server on port $DISCOVERED_PORT ($LOCAL_UPSTREAM)"
+if [[ "${AGY_SKIP_RAM_PREFLIGHT:-0}" != "1" ]]; then
+    set +e
+    PREFLIGHT_OUT=$(python3 "$DELEGATE_SCRIPT" preflight --model "$LOCAL_MODEL" 2>&1)
+    PREFLIGHT_STATUS=$?
+    set -e
+    printf '%s\n' "$PREFLIGHT_OUT"
+    if [[ "$PREFLIGHT_STATUS" -ne 0 ]]; then
+        echo "[agy-local-mode] ERROR: RAM preflight failed; refusing to load another model." >&2
+        exit "$PREFLIGHT_STATUS"
     fi
 fi
 
-# ---------------------------------------------------------------------------
-# 3. Dynamic Proxy Port Discovery (9191-9205)
-# ---------------------------------------------------------------------------
-if [[ -z "${AGY_LOCAL_PROXY_PORT:-}" ]]; then
-    DYNAMIC_PROXY_PORT=$(python3 -c "
-import sys, os
-sys.path.insert(0, os.path.dirname('$SCRIPT_DIR'))
+MODEL_JSON=$(PYTHONPATH="$CORE_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$LOCAL_MODEL" <<'PY_RESOLVE'
+import json, sys
 import agy_local_delegate_core as core
-# Check if existing proxy is active
-for p in range(9191, 9205):
-    res = core.check_server_health(f'http://127.0.0.1:{p}', timeout=0.3)
-    # Check if proxy health responds
-    try:
-        import urllib.request
-        with urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=0.3) as resp:
-            if resp.status == 200:
-                print(p)
-                sys.exit(0)
-    except Exception:
-        pass
-# Otherwise return first free port
-print(core.find_free_port(9191, 9205))
-" 2>/dev/null || true)
-    if [[ -n "$DYNAMIC_PROXY_PORT" ]]; then
-        PROXY_PORT="$DYNAMIC_PROXY_PORT"
+print(json.dumps(core.resolve_model_reference(sys.argv[1])))
+PY_RESOLVE
+)
+MODEL_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])' <<<"$MODEL_JSON")
+SERVE_ARG=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["serve_arg"])' <<<"$MODEL_JSON")
+
+OWNED_SERVER=0
+OWNED_PROXY=0
+SERVER_PID=""
+PROXY_PID=""
+RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agy-local-mode.XXXXXX")"
+SERVER_LOG="$RUNTIME_DIR/rapid-mlx.log"
+PROXY_LOG="$RUNTIME_DIR/proxy.log"
+
+cleanup() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [[ "$OWNED_PROXY" -eq 1 && -n "$PROXY_PID" ]]; then
+        kill "$PROXY_PID" 2>/dev/null || true
+        wait "$PROXY_PID" 2>/dev/null || true
+    fi
+    if [[ "$OWNED_SERVER" -eq 1 && -n "$SERVER_PID" ]]; then
+        kill "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    rm -rf "$RUNTIME_DIR"
+    exit "$status"
+}
+trap cleanup EXIT INT TERM
+
+endpoint_online() {
+    PYTHONPATH="$CORE_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$1" <<'PY_HEALTH'
+import sys
+import agy_local_delegate_core as core
+raise SystemExit(0 if core.check_server_health(sys.argv[1], timeout=1.5).get("online") else 1)
+PY_HEALTH
+}
+
+find_free_port() {
+    PYTHONPATH="$CORE_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$1" "$2" <<'PY_PORT'
+import sys
+import agy_local_delegate_core as core
+print(core.find_free_port(int(sys.argv[1]), int(sys.argv[2])))
+PY_PORT
+}
+
+if [[ "$UPSTREAM_EXPLICIT" -eq 0 ]]; then
+    MATCH_JSON=$(PYTHONPATH="$CORE_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$LOCAL_MODEL" <<'PY_MATCH'
+import json, sys
+import agy_local_delegate_core as core
+server = core.find_matching_model_server(sys.argv[1], 8000, 8015)
+print(json.dumps(server or {}))
+PY_MATCH
+)
+    MATCH_PORT=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("port", ""))' <<<"$MATCH_JSON")
+    if [[ -n "$MATCH_PORT" ]]; then
+        LOCAL_UPSTREAM="http://127.0.0.1:${MATCH_PORT}/v1"
+        echo "[agy-local-mode] Reusing requested model on port $MATCH_PORT."
+    fi
+fi
+
+if [[ -z "$LOCAL_UPSTREAM" ]]; then
+    UPSTREAM_PORT=$(find_free_port 8000 8015)
+    if [[ "$UPSTREAM_PORT" == "0" ]]; then
+        echo "[agy-local-mode] ERROR: no free local model port in 8000-8015." >&2
+        exit 1
+    fi
+
+    RAPID_MLX_BIN="${AGY_RAPID_MLX_BIN:-}"
+    if [[ -z "$RAPID_MLX_BIN" ]]; then
+        RAPID_MLX_BIN="$(command -v rapid-mlx 2>/dev/null || true)"
+    fi
+    if [[ -z "$RAPID_MLX_BIN" ]]; then
+        for candidate in \
+            "$HOME/.local/bin/rapid-mlx" \
+            "$HOME/.rapid-mlx/bin/rapid-mlx" \
+            "$HOME/.venvs/rapid-mlx-0.12.18/bin/rapid-mlx" \
+            "/opt/homebrew/bin/rapid-mlx" \
+            "/usr/local/bin/rapid-mlx"; do
+            if [[ -x "$candidate" ]]; then RAPID_MLX_BIN="$candidate"; break; fi
+        done
+    fi
+    if [[ -z "$RAPID_MLX_BIN" || ! -x "$RAPID_MLX_BIN" ]]; then
+        echo "[agy-local-mode] ERROR: no matching server is running and rapid-mlx was not found." >&2
+        echo "  Install Rapid-MLX or set AGY_RAPID_MLX_BIN=/absolute/path/to/rapid-mlx" >&2
+        exit 1
+    fi
+
+    LOCAL_UPSTREAM="http://127.0.0.1:${UPSTREAM_PORT}/v1"
+    echo "[agy-local-mode] Starting Rapid-MLX on port $UPSTREAM_PORT..."
+    "$RAPID_MLX_BIN" serve "$SERVE_ARG" --port "$UPSTREAM_PORT" >"$SERVER_LOG" 2>&1 &
+    SERVER_PID=$!
+    OWNED_SERVER=1
+
+    deadline=$((SECONDS + SERVER_TIMEOUT))
+    while ! endpoint_online "$LOCAL_UPSTREAM"; do
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "[agy-local-mode] ERROR: Rapid-MLX exited during startup." >&2
+            tail -n 80 "$SERVER_LOG" >&2 || true
+            exit 1
+        fi
+        if (( SECONDS >= deadline )); then
+            echo "[agy-local-mode] ERROR: Rapid-MLX did not become ready within ${SERVER_TIMEOUT}s." >&2
+            tail -n 80 "$SERVER_LOG" >&2 || true
+            exit 1
+        fi
+        sleep 1
+    done
+elif ! endpoint_online "$LOCAL_UPSTREAM"; then
+    echo "[agy-local-mode] ERROR: configured upstream is not OpenAI-compatible or is offline: $LOCAL_UPSTREAM" >&2
+    exit 1
+fi
+
+SERVED_MODEL=$(PYTHONPATH="$CORE_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$LOCAL_UPSTREAM" "$LOCAL_MODEL" <<'PY_MODEL'
+import sys
+import agy_local_delegate_core as core
+print(core.get_server_model(sys.argv[1], requested=sys.argv[2], timeout=3) or "")
+PY_MODEL
+)
+if [[ -z "$SERVED_MODEL" ]]; then
+    echo "[agy-local-mode] ERROR: upstream returned no model from /v1/models." >&2
+    exit 1
+fi
+# A just-started server is known to host SERVE_ARG. An auto-reused server was matched before this point.
+MODEL_ID="$SERVED_MODEL"
+
+if [[ -z "$PROXY_PORT" ]]; then
+    PROXY_PORT=$(find_free_port 9191 9205)
+    if [[ "$PROXY_PORT" == "0" ]]; then
+        echo "[agy-local-mode] ERROR: no free proxy port in 9191-9205." >&2
+        exit 1
+    fi
+else
+    FREE_CHECK=$(find_free_port "$PROXY_PORT" "$PROXY_PORT")
+    if [[ "$FREE_CHECK" == "0" ]]; then
+        echo "[agy-local-mode] ERROR: requested proxy port $PROXY_PORT is already occupied; it will not be killed." >&2
+        exit 1
+    fi
+fi
+
+PROXY_ARGS=(python3 "$PROXY_SCRIPT" --port "$PROXY_PORT" --upstream "$LOCAL_UPSTREAM" --model "$MODEL_ID" --timeout "$PROXY_TIMEOUT")
+[[ -n "${AGY_LOCAL_PROXY_DEBUG:-}" ]] && PROXY_ARGS+=(--debug)
+echo "[agy-local-mode] Starting Gemini proxy on free port $PROXY_PORT..."
+"${PROXY_ARGS[@]}" >"$PROXY_LOG" 2>&1 &
+PROXY_PID=$!
+OWNED_PROXY=1
+
+PROXY_BASE="http://127.0.0.1:$PROXY_PORT"
+proxy_deadline=$((SECONDS + 15))
+while ! python3 - "$PROXY_BASE" <<'PY_PROXY_HEALTH'
+import sys, urllib.request
+try:
+    with urllib.request.urlopen(sys.argv[1].rstrip("/") + "/health", timeout=1) as response:
+        raise SystemExit(0 if response.status == 200 else 1)
+except Exception:
+    raise SystemExit(1)
+PY_PROXY_HEALTH
+do
+    if ! kill -0 "$PROXY_PID" 2>/dev/null; then
+        echo "[agy-local-mode] ERROR: proxy exited during startup on port $PROXY_PORT." >&2
+        cat "$PROXY_LOG" >&2 || true
+        exit 1
+    fi
+    if (( SECONDS >= proxy_deadline )); then
+        echo "[agy-local-mode] ERROR: proxy failed health verification on port $PROXY_PORT." >&2
+        cat "$PROXY_LOG" >&2 || true
+        exit 1
+    fi
+    sleep 0.25
+done
+
+if [[ "${AGY_LOCAL_SKIP_SMOKE:-0}" != "1" ]]; then
+    SMOKE_JSON=$(PYTHONPATH="$CORE_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - "$PROXY_BASE" "$PROXY_TIMEOUT" <<'PY_SMOKE'
+import json, sys
+import agy_local_delegate_core as core
+print(json.dumps(core.smoke_test_gemini_proxy(sys.argv[1], timeout=float(sys.argv[2]))))
+PY_SMOKE
+)
+    if [[ "$(python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("success") else "0")' <<<"$SMOKE_JSON")" != "1" ]]; then
+        echo "[agy-local-mode] ERROR: end-to-end local inference smoke test failed." >&2
+        python3 -c 'import json,sys; print(json.load(sys.stdin).get("error", "unknown error"))' <<<"$SMOKE_JSON" >&2
+        tail -n 80 "$SERVER_LOG" >&2 2>/dev/null || true
+        tail -n 80 "$PROXY_LOG" >&2 2>/dev/null || true
+        exit 1
     fi
 fi
 
 echo "┌─────────────────────────────────────────────────────────┐"
-echo "│  agy-local-mode: Local Model Mode                        │"
+echo "│  AGY local mode verified                                 │"
 echo "├─────────────────────────────────────────────────────────┤"
-echo "│  Upstream:    $LOCAL_UPSTREAM"
-echo "│  Model:       $LOCAL_MODEL"
-echo "│  Proxy Port:  $PROXY_PORT (dynamic free slot)"
+echo "│  Upstream: $LOCAL_UPSTREAM"
+echo "│  Model:    $MODEL_ID"
+echo "│  Proxy:    $PROXY_BASE"
 echo "└─────────────────────────────────────────────────────────┘"
-echo ""
+echo "[agy-local-mode] Launching AGY. Local smoke test passed."
 
-# Check if upstream is alive
-if ! curl -sf "${LOCAL_UPSTREAM%/v1}/health" --max-time 2 &>/dev/null && \
-   ! curl -sf "${LOCAL_UPSTREAM}/models" --max-time 2 &>/dev/null; then
-    echo "[agy-local-mode] ⚠️  WARNING: Local model server not detected at $LOCAL_UPSTREAM"
-    echo "                    Start Rapid-MLX (MLX) or llama-server (GGUF) first, e.g.:"
-    echo "                    ~/.venvs/rapid-mlx-0.12.18/bin/rapid-mlx \\"
-    echo "                      --model ~/.models/Qwen3.8-27B-4bit"
-    echo ""
-    read -r -p "Continue anyway? [y/N] " CONFIRM
-    [[ "${CONFIRM:-N}" =~ ^[Yy]$ ]] || exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# 4. Proxy Lifecycle & Startup
-# ---------------------------------------------------------------------------
-OWNED_PROXY=0
-if curl -sf "http://127.0.0.1:$PROXY_PORT/health" --max-time 1 &>/dev/null; then
-    echo "[agy-local-mode] Existing healthy proxy active on port $PROXY_PORT. Reusing..."
-else
-    # Check if port is occupied by a stale non-proxy process
-    EXISTING_PID=$(lsof -ti :"$PROXY_PORT" 2>/dev/null || true)
-    if [[ -n "$EXISTING_PID" ]]; then
-        echo "[agy-local-mode] Cleaning up stale process on port $PROXY_PORT (PID $EXISTING_PID)..."
-        kill -9 "$EXISTING_PID" 2>/dev/null || true
-        sleep 0.5
-    fi
-
-    PROXY_CMD="python3 $PROXY_SCRIPT --port $PROXY_PORT --upstream $LOCAL_UPSTREAM --model $LOCAL_MODEL --timeout $PROXY_TIMEOUT $PROXY_DEBUG"
-    echo "[agy-local-mode] Starting Gemini→OpenAI proxy on port $PROXY_PORT..."
-    $PROXY_CMD &
-    PROXY_PID=$!
-    OWNED_PROXY=1
-
-    # Wait for proxy to be ready
-    WAIT=0
-    while ! curl -sf "http://127.0.0.1:$PROXY_PORT/health" --max-time 1 &>/dev/null; do
-        sleep 0.2
-        WAIT=$((WAIT + 1))
-        if [[ $WAIT -gt 25 ]]; then
-            echo "[agy-local-mode] ERROR: Proxy failed to start on port $PROXY_PORT" >&2
-            kill "$PROXY_PID" 2>/dev/null || true
-            exit 1
-        fi
-    done
-fi
-
-echo "[agy-local-mode] Proxy ready on port $PROXY_PORT"
-echo "[agy-local-mode] Launching AGY..."
-echo ""
-
-# ---------------------------------------------------------------------------
-# 5. Cleanup on exit
-# ---------------------------------------------------------------------------
-cleanup() {
-    if [[ "$OWNED_PROXY" -eq 1 && -n "${PROXY_PID:-}" ]]; then
-        echo ""
-        echo "[agy-local-mode] Stopping proxy (PID $PROXY_PID)..."
-        kill "$PROXY_PID" 2>/dev/null || true
-        wait "$PROXY_PID" 2>/dev/null || true
-        echo "[agy-local-mode] Done."
-    fi
-}
-trap cleanup EXIT INT TERM
-
-# ---------------------------------------------------------------------------
-# 6. Launch AGY with proxy base URL
-# ---------------------------------------------------------------------------
-GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:$PROXY_PORT" agy "${AGY_ARGS[@]}"
+GEMINI_API_KEY="${GEMINI_API_KEY:-local-loopback-only}" \
+GOOGLE_GEMINI_BASE_URL="$PROXY_BASE" \
+agy "${AGY_ARGS[@]}"

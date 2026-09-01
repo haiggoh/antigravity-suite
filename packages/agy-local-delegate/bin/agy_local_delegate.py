@@ -12,7 +12,11 @@ import sys
 import os
 import argparse
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PACKAGE_DIR = os.path.dirname(SCRIPT_DIR)
+for candidate in (SCRIPT_DIR, PACKAGE_DIR):
+    if candidate not in sys.path:
+        sys.path.insert(0, candidate)
 import agy_local_delegate_core as core
 
 
@@ -162,7 +166,11 @@ def main():
         print("  q) Quit\n", file=sys.stderr)
 
         try:
-            choice = input("Selection [1]: ").strip()
+            print("Selection [1]: ", end="", file=sys.stderr, flush=True)
+            choice = sys.stdin.readline()
+            if choice == "":
+                raise EOFError
+            choice = choice.strip()
         except (EOFError, KeyboardInterrupt):
             print("", file=sys.stderr)
             sys.exit(1)
@@ -174,7 +182,11 @@ def main():
             sys.exit(1)
         elif choice.lower() == "c":
             try:
-                custom_model = input("Enter custom model ID / path: ").strip()
+                print("Enter custom model ID / path: ", end="", file=sys.stderr, flush=True)
+                custom_model = sys.stdin.readline()
+                if custom_model == "":
+                    raise EOFError
+                custom_model = custom_model.strip()
                 if not custom_model:
                     sys.exit(1)
                 print(custom_model)

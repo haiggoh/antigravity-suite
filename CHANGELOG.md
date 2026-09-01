@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.4.0] - 2026-09-01
+
+### 🚀 Verified Full Local AGY Sessions
+
+#### `agy-local-delegate` 0.2.0
+* Fixed no-argument startup so `agy-local-mode` selects the default operator without capturing menu prompts.
+* Preserved the interactive picker through `agy-csl` and `--menu`.
+* Added owned Rapid-MLX server startup using `rapid-mlx serve`.
+* Reuses only servers that advertise the requested model.
+* Allocates model ports from `8000–8015` and proxy ports from `9191–9205`.
+* Never kills unrelated listeners merely because a port is occupied.
+* Added upstream-aware proxy health checks and mandatory end-to-end inference smoke testing.
+* Requires AGY's Gemini provider configuration to prevent accidental cloud fallback.
+* Added Gemini/OpenAI function-tool translation, basic SSE responses, and `countTokens`.
+* Added focused regression coverage for model resolution, menu output, server matching, proxy inference, and tool calls.
+
 ## [v1.3.3] - 2026-09-01
 
 ### 🛡️ Audit Fixture Suppression
