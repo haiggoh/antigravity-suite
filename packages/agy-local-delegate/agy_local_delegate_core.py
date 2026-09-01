@@ -607,67 +607,192 @@ def ram_preflight_check(
     }
 
 
-def get_attached_agy_ports() -> List[int]:
-    """Find ports attached to running agy sessions."""
-    attached = set()
+def _loopback_port_from_env(command: str, variable: str) -> Optional[int]:
+    """Extract a loopback endpoint port from one process-environment line."""
+    pattern = (
+        rf"(?:^|\s){re.escape(variable)}="
+        r"https?://(?:localhost|127\.0\.0\.1):(\d+)(?:/|\s|$)"
+    )
+    match = re.search(pattern, command)
+    return int(match.group(1)) if match else None
+
+
+def _add_attached_owner(
+    attached: Dict[int, List[str]],
+    port: int,
+    owner: str,
+) -> None:
+    owners = attached.setdefault(port, [])
+    if owner not in owners:
+        owners.append(owner)
+
+
+def get_attached_client_ports() -> Tuple[Dict[int, List[str]], bool]:
+    """Return local inference/proxy ports attached to AGY or Claude clients.
+
+    Claude Code's loopback ANTHROPIC_BASE_URL is authoritative. AGY's
+    GOOGLE_GEMINI_BASE_URL identifies its proxy; an attached proxy's /health
+    response is used to protect the upstream model server as well.
+
+    The boolean reports whether client inspection was reliable. Callers must
+    fail closed when it is false.
+    """
+    attached: Dict[int, List[str]] = {}
+
     try:
-        # Check agy processes
-        agy_pids_out = subprocess.check_output(["pgrep", "-x", "agy"]).decode().split()
-        for pid in agy_pids_out:
-            # Check open connections from agy pid
-            lsof_out = subprocess.check_output(["lsof", "-nP", "-p", pid]).decode()
-            for m in re.finditer(r":(\d+)\s+\(LISTEN|\(ESTABLISHED", lsof_out):
-                port = int(m.group(1))
-                if 8000 <= port <= 8020 or 9191 <= port <= 9210 or port == 8080:
-                    attached.add(port)
+        result = subprocess.run(
+            ["ps", "eww", "-axo", "pid=,command="],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
     except Exception:
-        pass
-    return sorted(list(attached))
+        return attached, False
+
+    for line in result.stdout.splitlines():
+        is_claude = bool(
+            re.search(r"(?:^|\s)(?:\S*/)?claude(?:\s|$)", line)
+        )
+        is_agy = bool(
+            re.search(r"(?:^|\s)(?:\S*/)?agy(?:\s|$)", line)
+        )
+
+        if is_claude:
+            port = _loopback_port_from_env(line, "ANTHROPIC_BASE_URL")
+            if port is not None:
+                _add_attached_owner(attached, port, "Claude Code")
+
+        if is_agy:
+            port = _loopback_port_from_env(
+                line,
+                "GOOGLE_GEMINI_BASE_URL",
+            )
+            if port is not None:
+                _add_attached_owner(attached, port, "AGY")
+
+    reliable = True
+
+    # An AGY client attaches to the Gemini proxy. Protect the proxy's upstream
+    # model server too, because killing it would still terminate inference.
+    for proxy_port, owners in list(attached.items()):
+        if "AGY" not in owners or not 9191 <= proxy_port <= 9205:
+            continue
+
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{proxy_port}/health",
+                timeout=2,
+            ) as response:
+                health = json.loads(response.read().decode("utf-8"))
+            upstream = str(health.get("upstream", ""))
+            match = re.search(
+                r"https?://(?:localhost|127\.0\.0\.1):(\d+)",
+                upstream,
+            )
+            if not match:
+                reliable = False
+                continue
+            _add_attached_owner(
+                attached,
+                int(match.group(1)),
+                "AGY",
+            )
+        except Exception:
+            # We know an AGY client targets this proxy but cannot establish its
+            # upstream. Protect all discovered servers rather than guessing.
+            reliable = False
+
+    return attached, reliable
+
+
+def get_attached_agy_ports() -> List[int]:
+    """Backward-compatible view of ports attached to AGY clients."""
+    attached, _ = get_attached_client_ports()
+    return sorted(
+        port
+        for port, owners in attached.items()
+        if "AGY" in owners
+    )
+
+
+def _listener_pid(port: int) -> Optional[int]:
+    try:
+        output = subprocess.check_output(
+            [
+                "lsof", "-nP", f"-iTCP:{port}",
+                "-sTCP:LISTEN", "-t",
+            ],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return None
+
+    first = output.splitlines()[0].strip() if output else ""
+    return int(first) if first.isdigit() else None
+
+
+def _process_command(pid: int) -> str:
+    try:
+        return subprocess.check_output(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return ""
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 def list_resident_servers(
     port_range: Tuple[int, int] = (8000, 8015),
-    extra_ports: Tuple[int, ...] = (8080, 9191, 9192, 9193),
+    extra_ports: Tuple[int, ...] = (
+        8080,
+        9191, 9192, 9193, 9194, 9195,
+        9196, 9197, 9198, 9199, 9200,
+        9201, 9202, 9203, 9204, 9205,
+    ),
 ) -> List[Dict[str, Any]]:
-    """Discover all running local inference servers and proxies with memory stats."""
+    """Discover local inference servers and protect attached clients."""
     servers = []
-    attached_ports = set(get_attached_agy_ports())
+    attached_map, inspection_reliable = get_attached_client_ports()
 
-    ports_to_check = list(range(port_range[0], port_range[1] + 1)) + list(extra_ports)
+    ports_to_check = list(dict.fromkeys(
+        list(range(port_range[0], port_range[1] + 1))
+        + list(extra_ports)
+    ))
     checked_pids = set()
 
     for port in ports_to_check:
-        try:
-            lsof_out = subprocess.check_output(
-                ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
-                stderr=subprocess.DEVNULL
-            ).decode().strip()
-        except Exception:
-            continue
-
-        if not lsof_out:
-            continue
-
-        pid_str = lsof_out.splitlines()[0].strip()
-        if not pid_str.isdigit():
-            continue
-        pid = int(pid_str)
-        if pid in checked_pids or pid <= 1:
+        pid = _listener_pid(port)
+        if pid is None or pid <= 1 or pid in checked_pids:
             continue
         checked_pids.add(pid)
 
-        # Get command line, RSS, and elapsed time
+        cmd = _process_command(pid)
         try:
-            cmd = subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)]).decode().strip()
-            rss_kb_str = subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)]).decode().strip()
-            etime_str = subprocess.check_output(["ps", "-o", "etime=", "-p", str(pid)]).decode().strip()
-            rss_mb = round(int(rss_kb_str) / 1024, 1) if rss_kb_str.isdigit() else 0.0
+            rss_raw = subprocess.check_output(
+                ["ps", "-o", "rss=", "-p", str(pid)],
+                stderr=subprocess.DEVNULL,
+            ).decode().strip()
+            etime = subprocess.check_output(
+                ["ps", "-o", "etime=", "-p", str(pid)],
+                stderr=subprocess.DEVNULL,
+            ).decode().strip()
+            rss_mb = (
+                round(int(rss_raw) / 1024, 1)
+                if rss_raw.isdigit()
+                else 0.0
+            )
         except Exception:
-            cmd = "unknown"
             rss_mb = 0.0
-            etime_str = "0:00"
+            etime = "unknown"
 
-        # Determine backend
         cmd_lower = cmd.lower()
         if "rapid-mlx" in cmd_lower:
             backend = "rapid-mlx"
@@ -679,22 +804,17 @@ def list_resident_servers(
             backend = "vllm-mlx"
         elif "agy_local_proxy.py" in cmd_lower:
             backend = "agy-proxy"
-        elif "python" in cmd_lower and ("8000" in cmd_lower or "9191" in cmd_lower):
+        elif "python" in cmd_lower:
             backend = "python-server"
         else:
             backend = "other"
 
-        is_attached = port in attached_ports
+        owners = list(attached_map.get(port, []))
+        if not inspection_reliable:
+            owners = owners or ["unknown client (inspection failed)"]
 
-        # Ranking score (lower = better candidate for eviction)
-        # 0 = unattached proxy/zombie, 1 = unattached large server, 2 = attached server
-        if not is_attached:
-            if backend == "agy-proxy":
-                rank = 0
-            else:
-                rank = 1
-        else:
-            rank = 3
+        attached = bool(owners)
+        rank = 3 if attached else (0 if backend == "agy-proxy" else 1)
 
         servers.append({
             "port": port,
@@ -702,13 +822,17 @@ def list_resident_servers(
             "backend": backend,
             "command": cmd,
             "rss_mb": rss_mb,
-            "etime": etime_str,
-            "attached": is_attached,
+            "etime": etime,
+            "attached": attached,
+            "attached_clients": owners,
+            "attachment_inspection_reliable": inspection_reliable,
             "rank": rank,
         })
 
-    # Sort by rank ascending, then RSS descending
-    servers.sort(key=lambda s: (s["rank"], -s["rss_mb"]))
+    servers.sort(key=lambda server: (
+        server["rank"],
+        -server["rss_mb"],
+    ))
     return servers
 
 
@@ -717,62 +841,94 @@ def evict_servers(
     pid: Optional[int] = None,
     evict_all: bool = False,
     dry_run: bool = False,
+    force_attached: bool = False,
+    term_wait: float = 8.0,
 ) -> List[Dict[str, Any]]:
-    """Evict local model servers/proxies according to safety rankings."""
+    """Evict eligible servers while protecting attached clients by default."""
     servers = list_resident_servers()
     if not servers:
         return []
 
-    targets = []
     if pid is not None:
-        targets = [s for s in servers if s["pid"] == pid]
+        selected = [server for server in servers if server["pid"] == pid]
     elif port is not None:
-        targets = [s for s in servers if s["port"] == port]
+        selected = [server for server in servers if server["port"] == port]
     elif evict_all:
-        targets = servers
+        selected = list(servers)
     else:
-        # Evict single highest-ranked candidate
-        targets = [servers[0]]
+        unattached = [
+            server for server in servers if not server["attached"]
+        ]
+        selected = unattached[:1] if unattached else servers[:1]
 
     results = []
-    for s in targets:
-        target_pid = s["pid"]
-        target_backend = s["backend"]
-        target_port = s["port"]
-        target_rss = s["rss_mb"]
+
+    for server in selected:
+        result = {
+            "pid": server["pid"],
+            "port": server["port"],
+            "backend": server["backend"],
+            "rss_mb": server["rss_mb"],
+            "attached": server["attached"],
+            "attached_clients": server.get("attached_clients", []),
+        }
+
+        if server["attached"] and not force_attached:
+            result["action"] = "protected_attached"
+            results.append(result)
+            continue
 
         if dry_run:
-            results.append({
-                "pid": target_pid,
-                "port": target_port,
-                "backend": target_backend,
-                "rss_mb": target_rss,
-                "action": "would_evict",
-            })
-        else:
-            try:
-                os.kill(target_pid, 15)  # SIGTERM
-                time.sleep(0.5)
-                # Check if still alive
-                try:
-                    os.kill(target_pid, 0)
-                    os.kill(target_pid, 9)  # SIGKILL if still lingering
-                except OSError:
-                    pass
-                results.append({
-                    "pid": target_pid,
-                    "port": target_port,
-                    "backend": target_backend,
-                    "rss_mb": target_rss,
-                    "action": "evicted",
-                })
-            except Exception as e:
-                results.append({
-                    "pid": target_pid,
-                    "port": target_port,
-                    "backend": target_backend,
-                    "rss_mb": target_rss,
-                    "action": f"failed: {e}",
-                })
+            result["action"] = "would_evict"
+            results.append(result)
+            continue
+
+        target_pid = server["pid"]
+        target_port = server["port"]
+        original_command = server["command"]
+
+        # Revalidate both listener ownership and process identity immediately
+        # before signaling. PID reuse or port handoff must fail closed.
+        if (
+            _listener_pid(target_port) != target_pid
+            or not original_command
+            or _process_command(target_pid) != original_command
+        ):
+            result["action"] = "skipped_identity_changed"
+            results.append(result)
+            continue
+
+        try:
+            os.kill(target_pid, 15)
+        except Exception as exc:
+            result["action"] = f"failed_term: {exc}"
+            results.append(result)
+            continue
+
+        deadline = time.monotonic() + max(0.0, term_wait)
+        while _pid_alive(target_pid) and time.monotonic() < deadline:
+            time.sleep(0.2)
+
+        if not _pid_alive(target_pid):
+            result["action"] = "evicted_term"
+            results.append(result)
+            continue
+
+        # Escalate only if the same PID still owns the same listener and has
+        # the same command identity. Never SIGKILL a changed/reused process.
+        if (
+            _listener_pid(target_port) != target_pid
+            or _process_command(target_pid) != original_command
+        ):
+            result["action"] = "term_sent_identity_changed_no_kill"
+            results.append(result)
+            continue
+
+        try:
+            os.kill(target_pid, 9)
+            result["action"] = "evicted_kill"
+        except Exception as exc:
+            result["action"] = f"failed_kill: {exc}"
+        results.append(result)
 
     return results

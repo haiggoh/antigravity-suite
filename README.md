@@ -1,7 +1,7 @@
 # Antigravity Suite (`antigravity-suite`)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.4.1-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-1.4.2-blue.svg)]()
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen.svg)]()
 [![Antigravity](https://img.shields.io/badge/Google-Antigravity%20CLI%20%2F%20IDE-orange.svg)]()
 

@@ -48,3 +48,21 @@ python3 bin/agy_local_delegate.py dispatch \
   --prompt "Review this file" \
   --files path/to/file.py
 ```
+
+## Safe server eviction
+
+`agy-evict` protects model servers attached to active AGY or Claude Code
+clients. Claude attachment is determined from each local client's loopback
+`ANTHROPIC_BASE_URL`. AGY proxy attachment also protects the proxy's upstream
+model server.
+
+Attached servers are protected for default, `--all`, `--port`, and `--pid`
+operations. Deliberate termination requires an explicit target together with
+`--force-attached`.
+
+```bash
+agy-evict --status
+agy-evict --dry-run
+agy-evict --port 8001
+agy-evict --port 8001 --force-attached
+```

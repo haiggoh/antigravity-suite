@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.4.2] - 2026-09-01
+
+### 🛡️ Cross-Client Local-Server Eviction Safety
+
+#### `agy-local-delegate` 0.2.1
+
+* Fixed `agy-evict` incorrectly treating Claude Code's active local model
+  server as orphaned.
+* Added Claude Code attachment detection from loopback
+  `ANTHROPIC_BASE_URL`.
+* Added AGY proxy-to-upstream protection.
+* Attached servers are now protected for default, `--all`, `--port`, and
+  `--pid` operations unless `--force-attached` is explicitly supplied.
+* Client-inspection failures now fail closed.
+* Added PID/listener/command revalidation before signaling.
+* Extended the graceful SIGTERM wait before guarded SIGKILL escalation.
+* Added regression coverage reproducing the port-8000 Claude attachment bug.
+
 ## [v1.4.1] - 2026-09-01
 
 ### 🔧 CLI Executable Permission Repair
