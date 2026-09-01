@@ -2,7 +2,7 @@
 
 Allows Antigravity sessions to offload mechanical analysis, summaries, reviews,
 or code inspections to free local LLMs running via OpenAI-compatible endpoints
-(e.g., Rapid-MLX, vLLM-MLX, MLX LM, Ollama, LM Studio).
+(e.g., Rapid-MLX for MLX, llama.cpp / llama-server for GGUF, Ollama, LM Studio).
 
 Features:
   * Full catalog updated to Qwen 3.8 (replacing Qwen 3.6 as default operator),

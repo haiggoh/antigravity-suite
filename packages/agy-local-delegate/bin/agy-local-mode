@@ -83,7 +83,7 @@ echo ""
 if ! curl -sf "${LOCAL_UPSTREAM%/v1}/health" --max-time 2 &>/dev/null && \
    ! curl -sf "${LOCAL_UPSTREAM}/models" --max-time 2 &>/dev/null; then
     echo "[agy-local-mode] ⚠️  WARNING: Local model server not detected at $LOCAL_UPSTREAM"
-    echo "                    Start your Rapid-MLX / vLLM-MLX server first, e.g.:"
+    echo "                    Start your Rapid-MLX (for MLX) or llama-server (for GGUF) server first, e.g.:"
     echo "                    ~/.venvs/rapid-mlx-0.12.18/bin/rapid-mlx \\"
     echo "                      --model ~/.models/Qwen3.8-27B-4bit"
     echo ""

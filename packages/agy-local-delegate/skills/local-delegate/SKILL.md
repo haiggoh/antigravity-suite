@@ -57,7 +57,7 @@ AGY CLI ──(Gemini API format)──► agy-local-proxy:9191
                                             Qwen 3.8 27B
 ```
 
-AGY speaks the Gemini API protocol natively. Rapid-MLX / vLLM-MLX speaks OpenAI. The proxy (`agy_local_proxy.py`) bridges the two with zero dependencies.
+AGY speaks the Gemini API protocol natively. Rapid-MLX (for MLX models) and llama.cpp / llama-server (for GGUF models) speak OpenAI-compatible REST APIs. The proxy (`agy_local_proxy.py`) bridges the two with zero dependencies.
 
 > **No model allowlist**: Unlike Claude Code's strict model allowlist, AGY uses `GOOGLE_GEMINI_BASE_URL` to redirect traffic, so **no spoofing required** — the local model can identify as itself.
 

@@ -4,7 +4,7 @@ agy-local-proxy — Gemini API → OpenAI-compatible translation proxy.
 
 Translates Google Gemini generateContent / streamGenerateContent API requests
 from AGY CLI into OpenAI chat/completions format and forwards them to a local
-inference server (Rapid-MLX, vLLM-MLX, Ollama, etc.).
+inference server (Rapid-MLX for MLX, llama.cpp / llama-server for GGUF, Ollama, etc.).
 
 This enables running any OpenAI-compatible local model as the main AGY engine
 by setting GOOGLE_GEMINI_BASE_URL to point here.
