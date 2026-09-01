@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.3.2] - 2026-09-01
+
+### 🛠️ Fixes & Documentation
+
+#### 🗺️ Waypoints Banner — Bootstrap Fix
+* Added `bin/waypoints.py` standalone CLI to `agy-waypoints` package (was missing from the installed CLI bin path).
+* Created `~/.gemini/waypoints.json` bootstrap helper so the pre-invocation session banner appears immediately on a fresh install without requiring a manual first-run setup.
+* `install.py` now ensures `waypoints.py` is symlinked alongside other CLI utilities.
+
+#### 📄 README Audit & Sync to v1.3.1
+* Corrected version badge from `1.1.0` → `1.3.1` (was stale by two major revisions).
+* Added missing packages to the packages table: `agy-transcript-distiller`, `get-antigravity`.
+* Expanded `agy-local-delegate` description to include `agy-local-mode` (Gemini→OpenAI proxy).
+* Updated `agy-waypoints` description to reflect full `waypoints.py` CLI interface.
+* Added step 7 to `install.py` install notes: symlinking of CLI utilities to `~/.local/bin/`.
+* Updated repository structure tree to include all 12 packages (was missing `agy-sync`, `agy-transcript-distiller`, `get-antigravity`).
+* Corrected RAM preflight description to note mandatory 16 GB floor enforcement.
+
+---
+
 ## [v1.3.1] - 2026-09-01
+
  
 ### 🚀 Local Architecture Enhancements (`agy-local-delegate`)
 

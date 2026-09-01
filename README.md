@@ -1,6 +1,7 @@
 # Antigravity Suite (`antigravity-suite`)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.3.2-blue.svg)]()
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen.svg)]()
 [![Antigravity](https://img.shields.io/badge/Google-Antigravity%20CLI%20%2F%20IDE-orange.svg)]()
 
@@ -12,7 +13,7 @@ A modular, production-ready power-user monorepo and configuration synchronizatio
 
 | Package | Skills Provided | Description |
 | :--- | :--- | :--- |
-| [**`agy-local-delegate`**](packages/agy-local-delegate) | `local-delegate` | Offline local model offloading to Apple Silicon MLX / Rapid (Qwen 3.8, DeepSeek R1, KAT Coder, Gemma 4). |
+| [**`agy-local-delegate`**](packages/agy-local-delegate) | `local-delegate` | Apple Silicon MLX / llama.cpp local model offloading (Qwen 3.8, DeepSeek R1, KAT Coder, Gemma 4). Includes `agy-csl`, `agy-evict`, and `agy-local-mode` Gemini→OpenAI proxy. |
 | [**`agy-run-to-completion`**](packages/agy-run-to-completion) | `run-to-completion`, `autopilot`, `triage-for-autonomy`, `execute-unattended`, `ungate-queue`, `close-out-the-run` | Autonomous multi-step execution loop, queue scoring, and attended blocker ungating. |
 | [**`agy-brief-agents`**](packages/agy-brief-agents) | `brief-agents` | Compiles global rules & workspace conventions into a compact briefing index for delegated subagents. |
 | [**`agy-resume-interrupted`**](packages/agy-resume-interrupted) | `resume-interrupted` | Detects rate-limited, stalled, or crashed prior sessions and formats exact continuation prompts. |
@@ -21,9 +22,12 @@ A modular, production-ready power-user monorepo and configuration synchronizatio
 | [**`agy-sync`**](packages/agy-sync) | `antigravity-sync` | Universal settings & rules synchronizer with conflict-free workspace auto-stash. |
 | [**`agy-measure-twice`**](packages/agy-measure-twice) | `measure-twice` | Pre-execution inspection skill guiding agents to survey existing capabilities before writing custom scripts. |
 | [**`agy-no-hidden-changes`**](packages/agy-no-hidden-changes) | *(Rule)* | Enforces transparent, honest, and reversible code modifications without phantom edits. |
-| [**`agy-waypoints`**](packages/agy-waypoints) | `waypoints` | Execution lifecycle banner system and structured milestone manager. |
+| [**`agy-waypoints`**](packages/agy-waypoints) | `waypoints` | Persistent open-items reminder with pre-invocation session banner. Manages `~/.gemini/waypoints.json` via `bin/waypoints.py` CLI (`list`, `add`, `done`, `edit`, `reopen`, `toggle`, `prune`). |
+| [**`agy-transcript-distiller`**](packages/agy-transcript-distiller) | `transcript-distiller` | Distills Antigravity conversation transcripts into compact, structured summaries for context hand-off and archiving. |
+| [**`get-antigravity`**](packages/get-antigravity) | `get-antigravity` | CLI hub and self-updater (`bin/get-antigravity`) for bootstrapping and keeping the suite current on a fresh system. |
 
 > 🗺️ **Evolution Roadmap**: For details on upcoming Phase 4 (Package Hub & Sync) and Phase 5 features, see [docs/ROADMAP.md](docs/ROADMAP.md).
+
 
 ---
 
@@ -50,6 +54,8 @@ python install.py
 4. Installs statusline telemetry scripts to `~/.gemini/statusline/`.
 5. Deploys root workspace guidelines (`GEMINI.md`) and hooks (`.agents/`) into your parent workspace.
 6. Cleans up legacy ad-hoc directories.
+7. Symlinks CLI utilities (`agy-csl`, `agy-evict`, `agy-local-mode`, `get-antigravity`) to `~/.local/bin/` for global shell access.
+
 
 ---
 
@@ -64,12 +70,12 @@ python install.py
   # Launch interactive disk-aware model picker:
   agy-csl
   ```
-* **🧠 RAM Preflight Safety**:
+* **🧠 RAM Preflight Safety** — mandatory guard runs before every local dispatch, enforcing a 16 GB floor:
   ```bash
   # Check if model fits in unified memory before loading:
   python3 packages/agy-local-delegate/bin/agy_local_delegate.py preflight --model qwen-3.8-operator
   ```
-* **🧹 Safe Memory Eviction Fallback (`agy-evict`)**:
+* **🧹 Safe Memory Eviction Utility (`agy-evict`)**:
   ```bash
   # Inspect resident model servers, RSS, and safety ranks:
   agy-evict --status
@@ -77,10 +83,16 @@ python install.py
   # Evict orphaned/idle servers without touching active AGY sessions:
   agy-evict
   ```
+* **🔌 Gemini→OpenAI Proxy (`agy-local-mode`)** — routes AGY traffic through a local Qwen 3.8 endpoint during quota outages:
+  ```bash
+  agy-local-mode           # start proxy on an auto-discovered free port
+  agy-local-mode --menu    # interactive model picker + start
+  ```
 * **📦 Live On-Disk Scanner**:
   ```bash
   python3 packages/agy-local-delegate/bin/agy_local_delegate.py scan
   ```
+
 
 ---
 
@@ -99,34 +111,38 @@ The synchronization engine (`bin/sync_engine.py`) is completely platform-agnosti
 
 ```text
 antigravity-suite/
-├── install.py                  # Cross-platform installer & synchronizer
-├── uninstall.py                # Safe uninstaller & backup restore pointer
-├── CHANGELOG.md                # Version history & release notes
+├── install.py                      # Cross-platform installer & synchronizer
+├── uninstall.py                    # Safe uninstaller & backup restore pointer
+├── CHANGELOG.md                    # Version history & release notes
 ├── bin/
-│   ├── sync_engine.py          # Core configuration and workspace engine
-│   └── sync_standalone_fork.py # Bi-directional package / fork synchronizer
-├── packages/                   # Monorepo packages (agy-*)
-│   ├── agy-local-delegate/     # Apple Silicon MLX local model offloading (Qwen 3.8, DeepSeek R1, KAT)
-│   ├── agy-run-to-completion/  # Autonomous execution & ungate engine (6 skills)
-│   ├── agy-brief-agents/       # Subagent briefing index & rule injector
-│   ├── agy-resume-interrupted/ # Interrupted session detector & resumer
-│   ├── agy-audit-loose-ends/   # Durable record & secret audit engine
-│   ├── agy-statusline/         # Live telemetry & quota status line
-│   ├── agy-measure-twice/      # Pre-execution inspection skill
-│   ├── agy-no-hidden-changes/  # Transparent code modification rule
-│   └── agy-waypoints/          # Lifecycle hook & banner plugin
+│   ├── sync_engine.py              # Core configuration and workspace engine
+│   └── sync_standalone_fork.py    # Bi-directional package / fork synchronizer
+├── packages/                       # Monorepo packages (agy-*)
+│   ├── agy-local-delegate/         # Apple Silicon MLX/llama.cpp offloading + agy-csl, agy-evict, agy-local-mode
+│   ├── agy-run-to-completion/      # Autonomous execution & ungate engine (6 skills)
+│   ├── agy-brief-agents/           # Subagent briefing index & rule injector
+│   ├── agy-resume-interrupted/     # Interrupted session detector & resumer
+│   ├── agy-audit-loose-ends/       # Durable record & secret audit engine
+│   ├── agy-statusline/             # Live telemetry & quota status line
+│   ├── agy-sync/                   # Universal settings & rules synchronizer
+│   ├── agy-measure-twice/          # Pre-execution inspection skill
+│   ├── agy-no-hidden-changes/      # Transparent code modification rule
+│   ├── agy-waypoints/              # Persistent open-items banner + waypoints.py CLI
+│   ├── agy-transcript-distiller/   # Conversation transcript distiller & summarizer
+│   └── get-antigravity/            # CLI hub & self-updater for fresh-system bootstrapping
 ├── templates/
-│   ├── shared-settings.json    # Shared settings template ({HOME} & {WORKSPACE} dynamic vars)
-│   ├── workspace-GEMINI.md     # Workspace root guidelines template
-│   └── agents/                 # Workspace-level agent configuration (.agents/)
-├── rules/                      # Synced global rules (~/.gemini/config/rules/)
+│   ├── shared-settings.json        # Shared settings template ({HOME} & {WORKSPACE} vars)
+│   ├── workspace-GEMINI.md         # Workspace root guidelines template
+│   └── agents/                     # Workspace-level agent configuration (.agents/)
+├── rules/                          # Synced global rules (~/.gemini/config/rules/)
 │   └── user_global.md
-├── skills/                     # Workspace-level skill definitions
-├── tests/                      # Smoke test suite for engine & packages
-└── docs/                       # Architecture, sync documentation & roadmap
-    ├── ROADMAP.md              # Feature parity roadmap
-    └── SYNC-ARCHITECTURE.md    # Multi-device sync architecture
+├── skills/                         # Workspace-level skill definitions
+├── tests/                          # Smoke test suite for engine & packages
+└── docs/                           # Architecture, sync documentation & roadmap
+    ├── ROADMAP.md                  # Feature parity roadmap
+    └── SYNC-ARCHITECTURE.md       # Multi-device sync architecture
 ```
+
 
 ---
 
