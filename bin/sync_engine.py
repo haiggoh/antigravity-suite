@@ -199,13 +199,86 @@ def sync_rules(rules_dir: str, dry_run: bool = False) -> None:
 
     for item in os.listdir(rules_dir):
         src_file = os.path.join(rules_dir, item)
-        if os.path.isfile(src_file):
+        if os.path.isfile(src_file) and item.endswith(".md"):
             dest_file = os.path.join(dest_dir, item)
             if dry_run:
                 print(f"[*] [dry-run] Would sync rule file: {item} -> {dest_file}")
             else:
                 shutil.copy2(src_file, dest_file)
                 print(f"[+] Synced rule file: {item} -> {dest_file}")
+
+
+def sync_skills_and_packages(repo_root: str, dry_run: bool = False) -> None:
+    """Auto-discover and sync skills and package rules to ~/.gemini/."""
+    home = get_home_dir()
+    target_skill_dirs = [
+        os.path.join(home, ".gemini", "antigravity-cli", "skills"),
+        os.path.join(home, ".gemini", "config", "skills"),
+    ]
+    rules_dest_dir = os.path.join(home, ".gemini", "config", "rules")
+
+    # 1. Sync top-level skills/
+    top_skills = os.path.join(repo_root, "skills")
+    if os.path.isdir(top_skills):
+        for sk_name in os.listdir(top_skills):
+            sk_src = os.path.join(top_skills, sk_name)
+            if os.path.isdir(sk_src) and os.path.isfile(os.path.join(sk_src, "SKILL.md")):
+                for target_dir in target_skill_dirs:
+                    dest = os.path.join(target_dir, sk_name)
+                    if dry_run:
+                        print(f"[*] [dry-run] Would sync skill: {sk_name} -> {dest}")
+                    else:
+                        os.makedirs(dest, exist_ok=True)
+                        shutil.copytree(sk_src, dest, dirs_exist_ok=True)
+                        print(f"[+] Synced skill: {sk_name} -> {dest}")
+
+    # 2. Sync packages/*/skills and packages/*/rules
+    packages_dir = os.path.join(repo_root, "packages")
+    if os.path.isdir(packages_dir):
+        for pkg in os.listdir(packages_dir):
+            pkg_path = os.path.join(packages_dir, pkg)
+            if not os.path.isdir(pkg_path):
+                continue
+
+            # Check for skills
+            pkg_skills = os.path.join(pkg_path, "skills")
+            if os.path.isdir(pkg_skills):
+                for sk_name in os.listdir(pkg_skills):
+                    sk_src = os.path.join(pkg_skills, sk_name)
+                    if os.path.isdir(sk_src) and os.path.isfile(os.path.join(sk_src, "SKILL.md")):
+                        for target_dir in target_skill_dirs:
+                            dest = os.path.join(target_dir, sk_name)
+                            if dry_run:
+                                print(f"[*] [dry-run] Would sync package skill: {pkg}/{sk_name} -> {dest}")
+                            else:
+                                os.makedirs(dest, exist_ok=True)
+                                shutil.copytree(sk_src, dest, dirs_exist_ok=True)
+                                print(f"[+] Synced package skill: {sk_name} -> {dest}")
+
+            # Check for rules
+            pkg_rules = os.path.join(pkg_path, "rules")
+            if os.path.isdir(pkg_rules):
+                for r_file in os.listdir(pkg_rules):
+                    if r_file.endswith(".md"):
+                        src_r = os.path.join(pkg_rules, r_file)
+                        dest_r = os.path.join(rules_dest_dir, r_file)
+                        if dry_run:
+                            print(f"[*] [dry-run] Would sync package rule: {pkg}/{r_file} -> {dest_r}")
+                        else:
+                            os.makedirs(rules_dest_dir, exist_ok=True)
+                            shutil.copy2(src_r, dest_r)
+                            print(f"[+] Synced package rule: {r_file} -> {dest_r}")
+
+            # Make bin scripts executable on POSIX
+            pkg_bin = os.path.join(pkg_path, "bin")
+            if sys.platform != "win32" and os.path.isdir(pkg_bin):
+                for b_file in os.listdir(pkg_bin):
+                    b_path = os.path.join(pkg_bin, b_file)
+                    if os.path.isfile(b_path):
+                        try:
+                            os.chmod(b_path, 0o755)
+                        except Exception:
+                            pass
 
 
 def sync_statusline(statusline_dir: str, dry_run: bool = False) -> None:
@@ -557,6 +630,7 @@ def main():
     
     success = sync_local_config(template_path, workspace_dir=os.path.abspath(args.workspace_dir), dry_run=args.dry_run)
     sync_rules(rules_path, dry_run=args.dry_run)
+    sync_skills_and_packages(repo_root, dry_run=args.dry_run)
     sync_statusline(statusline_path, dry_run=args.dry_run)
     sync_workspace_root(os.path.abspath(args.workspace_dir), repo_root, dry_run=args.dry_run)
     cleanup_legacy_antigravity_dir(dry_run=args.dry_run)

@@ -1,0 +1,8 @@
+{
+  "name": "agy-resume-interrupted",
+  "version": "0.1.0",
+  "description": "Interrupted Session Detector and Resumption Engine for Google Antigravity",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "skills": ["skills/resume-interrupted"]
+}

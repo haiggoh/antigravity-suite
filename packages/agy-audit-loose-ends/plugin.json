@@ -1,0 +1,8 @@
+{
+  "name": "agy-audit-loose-ends",
+  "version": "0.1.0",
+  "description": "Durable Record Reconciliation and Secret Audit Engine for Google Antigravity",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "skills": ["skills/audit-loose-ends"]
+}
