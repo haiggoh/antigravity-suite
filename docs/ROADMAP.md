@@ -49,11 +49,11 @@ This roadmap defines the architectural alignment, version tracking, and implemen
   - Add statusline banner indicator and briefing index compiler so open items surface automatically.
   - Full test suite: unit tests, CLI tests, menu composition tests.
 
-### Phase 2: Local Intelligence & Session Continuity Upgrades
-- [ ] **`agy-local-delegate` (v0.13.9 Upgrade)**: Auto-classifier, profile controls, Rapid venv watcher.
-- [ ] **`agy-audit-loose-ends` (v0.5.5 Upgrade)** & **`agy-resume-interrupted` (v0.4.0 Upgrade)**: Match window fixes, secret scanner, deep trajectory crash analyzer.
-- [ ] **`agy-run-to-completion` (v0.5.0 Upgrade)**: Full 5-tier autonomous execution loop and post-push verification.
-- [ ] **`agy-brief-agents` (v0.1.4 Upgrade)**: Comprehensive briefing index with live rule cache.
+### Phase 2: Local Intelligence & Session Continuity Upgrades (Completed)
+- [x] **`agy-local-delegate` (v0.13.9 Upgrade)**: Auto-classifier, profile controls, savings ledger, Rapid venv watcher.
+- [x] **`agy-audit-loose-ends` (v0.5.5 Upgrade)** & **`agy-resume-interrupted` (v0.4.0 Upgrade)**: Match window fixes, secret scanner, deep trajectory crash analyzer.
+- [x] **`agy-run-to-completion` (v0.5.0 Upgrade)**: Full 5-tier autonomous execution loop and post-push verification.
+- [x] **`agy-brief-agents` (v0.1.4 Upgrade)**: Comprehensive briefing index with live rule cache.
 
 ### Phase 3: Advanced Tooling, Distillation & Desktop Bridge
 - [ ] **`agy-transcript-distiller` (v0.8.0 Port)**: Line-addressable markdown capsule generator and CLI.

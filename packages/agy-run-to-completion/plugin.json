@@ -1,6 +1,6 @@
 {
   "name": "agy-run-to-completion",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Autonomous Multi-Step Execution, Queue Triage, and Blocker Ungating for Google Antigravity",
   "author": "Heiko Brantsch",
   "license": "MIT",

@@ -30,6 +30,15 @@ LIMIT_ERROR_KEYWORDS = (
     "usage limit",
 )
 
+STREAM_INTERRUPT_KEYWORDS = (
+    "stream was interrupted",
+    "the stream was interrupted",
+    "stream closed",
+    "connection closed",
+    "connection reset",
+    "broken pipe",
+)
+
 
 def get_home_dir() -> str:
     return os.environ.get("AGY_HOME_OVERRIDE") or os.path.expanduser("~")
@@ -88,14 +97,21 @@ def analyze_transcript(transcript_path: str, conversation_id: str) -> Optional[D
                 if isinstance(tc, dict) and "name" in tc:
                     tools_called.append(tc["name"])
 
-        # Check for limit kills or explicit errors
+        # Check for limit kills, stream breaks, or explicit errors
         lower_content = content.lower()
-        if status == "ERROR" or any(kw in lower_content for kw in LIMIT_ERROR_KEYWORDS):
+        if status == "ERROR" or any(kw in lower_content for kw in LIMIT_ERROR_KEYWORDS) or any(kw in lower_content for kw in STREAM_INTERRUPT_KEYWORDS):
             has_error = True
             if any(kw in lower_content for kw in LIMIT_ERROR_KEYWORDS):
                 interruption_reason = "limit_kill"
+            elif any(kw in lower_content for kw in STREAM_INTERRUPT_KEYWORDS):
+                interruption_reason = "stream_interrupted"
             else:
                 interruption_reason = "error_crash"
+
+    # If the session is purely a resume-interrupted invocation with 1 turn, ignore it
+    clean_prompt = last_user_prompt.strip()
+    if clean_prompt.startswith("/resume-interrupted") and turn_count <= 1:
+        return None
 
     # If the last step is a user input, the session stalled before responding
     if last_step.get("type") == "USER_INPUT":
@@ -116,21 +132,32 @@ def analyze_transcript(transcript_path: str, conversation_id: str) -> Optional[D
         "conversation_id": conversation_id,
         "transcript_path": transcript_path,
         "reason": interruption_reason,
-        "last_user_prompt": last_user_prompt.strip(),
+        "last_user_prompt": clean_prompt,
         "turn_count": turn_count,
         "recent_tools": list(dict.fromkeys(tools_called[-5:])),  # last 5 unique tools
         "timestamp": timestamp_str,
     }
 
 
-def find_interrupted_sessions(brain_dir: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+def find_interrupted_sessions(
+    brain_dir: Optional[str] = None,
+    limit: int = 10,
+    exclude_ids: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """Scan brain directory and return list of interrupted sessions sorted by recency."""
     target_dir = brain_dir or get_brain_dir()
     if not os.path.isdir(target_dir):
         return []
 
+    excluded = set(exclude_ids or [])
+    current_env_id = os.environ.get("AGY_CONVERSATION_ID") or os.environ.get("CONVERSATION_ID")
+    if current_env_id:
+        excluded.add(current_env_id)
+
     candidates = []
     for conv_id in os.listdir(target_dir):
+        if conv_id in excluded:
+            continue
         conv_folder = os.path.join(target_dir, conv_id)
         if not os.path.isdir(conv_folder):
             continue
@@ -150,9 +177,12 @@ def find_interrupted_sessions(brain_dir: Optional[str] = None, limit: int = 10) 
     return candidates[:limit]
 
 
-def get_recommended_resume(brain_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def get_recommended_resume(
+    brain_dir: Optional[str] = None,
+    exclude_ids: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
     """Get the single most recent interrupted session candidate."""
-    sessions = find_interrupted_sessions(brain_dir=brain_dir, limit=1)
+    sessions = find_interrupted_sessions(brain_dir=brain_dir, limit=1, exclude_ids=exclude_ids)
     return sessions[0] if sessions else None
 
 
