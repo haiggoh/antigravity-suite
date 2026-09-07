@@ -234,10 +234,23 @@ def sync_skills_and_packages(repo_root: str, dry_run: bool = False) -> None:
 
     # 2. Sync packages/*/skills and packages/*/rules
     packages_dir = os.path.join(repo_root, "packages")
+    skip_file = os.path.join(home, ".gemini", ".agy-skip.json")
+    skip_list = {}
+    if os.path.isfile(skip_file):
+        try:
+            with open(skip_file, "r", encoding="utf-8") as f:
+                skip_list = json.load(f)
+        except Exception:
+            pass
+
     if os.path.isdir(packages_dir):
-        for pkg in os.listdir(packages_dir):
+        for pkg in sorted(os.listdir(packages_dir)):
             pkg_path = os.path.join(packages_dir, pkg)
-            if not os.path.isdir(pkg_path):
+            if not os.path.isdir(pkg_path) or pkg.startswith((".", "_")):
+                continue
+
+            if skip_list.get(pkg) in ("install", "both"):
+                print(f"[=] Skipping package {pkg} (configured in skip list)")
                 continue
 
             # Check for skills

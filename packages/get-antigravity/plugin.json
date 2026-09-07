@@ -1,0 +1,11 @@
+{
+  "name": "get-antigravity",
+  "version": "1.0.0",
+  "description": "Package Hub, Skip-list Manager & Distribution Synchronizer for Google Antigravity Suite",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "category": "system",
+  "skills": [
+    "skills/get-antigravity"
+  ]
+}

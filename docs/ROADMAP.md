@@ -1,6 +1,8 @@
 # Antigravity Suite - Feature Parity & Evolution Roadmap
 
-This roadmap defines the architectural alignment and step-by-step implementation plan to bring full feature parity from the Claude Code `haiggoh` plugin suite to the cross-platform **Google Antigravity (AGY) Suite**.
+This roadmap defines the architectural alignment, version tracking, and implementation plan to bring full feature parity from the Claude Code `haiggoh` plugin suite to the cross-platform **Google Antigravity (AGY) Suite**.
+
+*(Note: Standalone universal tools like `human-shell` are maintained separately and do not require suite-specific ports).*
 
 ---
 
@@ -8,79 +10,58 @@ This roadmap defines the architectural alignment and step-by-step implementation
 
 | Claude Code Primitive | Antigravity / Gemini Equivalent | Purpose |
 | :--- | :--- | :--- |
-| `hooks/` (`SessionStart`, `PreToolUse`) | Lifecycle hooks / statusline integration / workspace `.agents/` | Proactive context injection and background monitoring. |
+| `hooks/` (`SessionStart`, `PreToolUse`, `PreInvocation`) | Statusline inline indicators, briefing index (`agent-briefing-index.md`), and workspace rules | Proactive context injection and background monitoring. |
 | `.claude/CLAUDE.md`, rules | `~/.gemini/config/rules/` and workspace `GEMINI.md` | Durable behavioral guidelines and project instructions. |
 | Agent / Workflow tools | AGY Subagents (`define_subagent`, `invoke_subagent`) | Context-isolated task delegation. |
 | `.claude/projects/` (`.jsonl`) | `~/.gemini/antigravity-cli/brain/<id>/.../transcript.jsonl` | Raw event, turn, and tool execution logs. |
-| `installed_plugins.json` / catalog | `packages/`, `install.py`, and `shared-settings.json` | Package management, distribution, and configuration. |
+| `installed_plugins.json` / catalog | `packages/`, `get-antigravity`, `install.py`, and `settings.json` | Package management, distribution, skip-lists, and configuration. |
 
 ---
 
-## 2. Feature Parity Matrix
+## 2. Feature Parity & Version Matrix
 
-| Feature | Claude Source Plugin | Antigravity Target Package / Module | Status |
+| Domain / Package | Claude Source & Version | Antigravity Suite Status | Parity & Evolution Goals |
 | :--- | :--- | :--- | :--- |
-| **Telemetry & Quota Statusline** | *(None / External)* | `packages/agy-statusline` | ✅ Complete |
-| **Transparent Modification Rules** | `no-hidden-changes` | `packages/agy-no-hidden-changes` | ✅ Complete |
-| **Pre-Execution Architectural Survey** | `measure-twice` | `packages/agy-measure-twice` | ✅ Complete |
-| **Persistent Task Banners (To-Dos)** | `waypoints` | `packages/agy-waypoints` | ✅ Complete |
-| **Workspace Git Auto-Stash Sync** | `claude-code-desktop-sync` | `bin/sync_engine.py` (`--workspace-sync`) | ✅ Complete |
-| **Subagent Context Briefing** | `brief-agents` | `packages/agy-brief-agents` | ✅ Complete |
-| **Session Continuity / Crash Recovery** | `resume-interrupted` | `packages/agy-resume-interrupted` | ✅ Complete |
-| **Durable Record Reconciliation** | `audit-loose-ends` | `packages/agy-audit-loose-ends` | ✅ Complete |
-| **Autonomous Multi-Step Execution** | `run-to-completion` | `packages/agy-run-to-completion` | ✅ Complete |
-| **Local Model Delegation (MLX)** | `local-agents` | `packages/agy-local-delegate` | ✅ Complete |
-| **Transcript Distillation & Capsules** | `claude-code-transcript-distiller` | `packages/agy-transcript-distiller` | ⏳ Phase 4 |
-| **Package Catalog & Auto-Updater** | `get-haiggoh` | `get-antigravity` (`install.py` v2) | ⏳ Phase 4 |
-| **Desktop / IDE MCP Synchronizer** | `claude-code-desktop-sync` | `bin/sync_engine.py` (Desktop MCP module) | ⏳ Phase 4 |
-| **MCP Verification & Probe Harness** | `mcp-smoke-test` | `packages/agy-mcp-smoke-test` | ⏳ Tabled |
-| **On-Demand Speech / TTS** | `claude-turn-speak` | `packages/agy-turn-speak` | ⏳ Tabled |
+| **Package Hub & Updater** | `get-haiggoh` (v0.4.0) | `get-antigravity` (**v1.0.0**) ✅ | **Complete**: Catalog scanner, atomic skip-list (`.agy-skip.json`), version drift detection, selective sync (`--only`, `--category`), and execution planner (`plan` / `apply`). |
+| **Persistent Task To-Dos** | `waypoints` (**v0.8.0**) | `agy-waypoints` (v0.1.0 port) ⚠️ | **Upgrade to v0.8.0**: Standalone interactive terminal CSL (`waypoints_menu.py` token-free TUI), startup print banner integration via statusline & briefing index, `pin --because`, multi-target `waiting_on`, and `recover` backup ring. |
+| **Local Model Delegation** | `local-agents` (**v0.13.9**) | `agy-local-delegate` (v0.2.1) ⚠️ | **Upgrade to v0.13.9**: Automated routing classifier, launcher profile controls, Rapid venv watchers, multiple model backends (MLX, Ollama, OpenAI-compatible), and process evict safety. |
+| **Durable Record Reconciliation** | `audit-loose-ends` (**v0.5.5**) | `agy-audit-loose-ends` (v0.1.1) ⚠️ | **Upgrade to v0.5.5**: Match window optimization, secret redaction, orphan clean-up, and `noaudit` fixture markers. |
+| **Session Continuity / Crash Recovery** | `resume-interrupted` (**v0.4.0**) | `agy-resume-interrupted` (v0.1.0) ⚠️ | **Upgrade to v0.4.0**: Multi-session brain trajectory scanner, structured crash triage, rate-limit cutoff resumption prompts. |
+| **Autonomous Queue Execution** | `run-to-completion` (**v0.5.0**) | `agy-run-to-completion` (v0.1.0) ⚠️ | **Upgrade to v0.5.0**: Refined G1-G4 gate triage, post-push dogfooding verification loop, and unattended auto-switch mechanics. |
+| **Subagent Briefing Index** | `brief-agents` (**v0.1.4**) | `agy-brief-agents` (v0.1.0) ⚠️ | **Upgrade to v0.1.4**: Live rule cache, full marketplace discovery index, and auto-briefing injection. |
+| **Transparent File Modification** | `no-hidden-changes` (**v1.4.3**) | `agy-no-hidden-changes` (v1.0.0 rules) ⚠️ | **Tooling Upgrade**: Active hook inspection, hermetic test suite, and shadow file guards. |
+| **Transcript Distillation** | `claude-code-transcript-distiller` (**v0.8.0**) | `agy-transcript-distiller` (v0.1.0 skeleton) ⏳ | **Port v0.8.0**: Chronological multi-session ordering, markdown capsule generator, artifact exporter, and CLI. |
+| **Cost & Token Telemetry** | `cost-tracker` (**v0.4.0**) | `agy-statusline` (telemetry only) ⏳ | **Add `agy-cost-tracker`**: Gateway quota calibration and token cost projection. |
+| **Desktop / IDE Sync** | `claude-code-desktop-sync` (**v1.0.2**) | `bin/sync_engine.py` (partial) ⏳ | **Add `agy-desktop-sync`**: Bidirectional MCP and settings mirror between Antigravity CLI and IDE. |
+| **Session Compaction** | `compact-session` (**v0.1.0**) | *(None)* ⏳ | **Port `agy-compact-session`**: Context compaction & branch pruning. |
+| **App MCP Probe Harness** | `mcp-smoke-test` (**v0.2.0**) | *(None)* ⏳ | **Tabled**: 4-part probe & test harness for app-controlling MCP servers (DaVinci Resolve, Blender, Adobe). |
+| **Voice / Speech Readback** | `claude-turn-speak` (**v0.1.7**) | *(None)* ⏳ | **Tabled**: macOS `say` and OpenAI TTS integration for hands-free voice workflows. |
 
 ---
 
-## 3. Implementation Phases
+## 3. Execution Phases
 
-### Phase 1: Core Session Continuity & Delegation Intelligence
-- [x] **`agy-brief-agents`** (Skill: `brief-agents`):
-  - Compiles `~/.gemini/config/rules/user_global.md`, workspace `GEMINI.md`, and active custom skills into `~/.gemini/agent-briefing-index.md`.
-  - Injects condensed context into subagent prompts during delegation (`invoke_subagent`).
-  - Unit tests + CLI tooling (`bin/agy_brief_agents.py`).
-- [x] **`agy-resume-interrupted`** (Skill: `resume-interrupted`):
-  - Scans `~/.gemini/antigravity-cli/brain/` for aborted trajectories, tool timeout crashes, or rate-limit cutoffs.
-  - Generates seamless resumption prompts and status summaries.
-  - Unit tests + CLI tooling (`bin/agy_resume_interrupted.py`).
-- [x] **`agy-audit-loose-ends`** (Skill: `audit-loose-ends`):
-  - End-of-task reconciliation skill for waypoints, memory records, task lists, and `GEMINI.md`.
-  - Secret redaction and orphan cleaner.
-  - Unit tests + SKILL definition.
+### Phase 1: Distribution & Core Interactive To-Dos (Completed)
+- [x] **`get-antigravity` (v1.0.0)**: Package Hub, skip-list manager, and distribution updater with 100% test coverage.
+- [x] **`agy-waypoints` (v0.8.0 Upgrade)**:
+  - Port `waypoints_core.py` v0.8.0 (`pin`, `waiting_on`, `recover`, atomic journal, backup ring).
+  - Port `waypoints_menu.py` (Standalone interactive terminal CSL / TTY menu).
+  - Add statusline banner indicator and briefing index compiler so open items surface automatically.
+  - Full test suite: unit tests, CLI tests, menu composition tests.
 
-### Phase 2: Autonomous Multi-Step Execution Loop
-- [x] **`agy-run-to-completion`** (Skills: `run-to-completion`, `autopilot`, `triage-for-autonomy`, `execute-unattended`, `ungate-queue`, `close-out-the-run`):
-  - `run-to-completion`: Front-loads clarification, runs multi-step tasks without stalling at non-destructive seams.
-  - `autopilot`: 4-phase end-to-end queue executor.
-  - `triage-for-autonomy`: Pre-execution queue scoring (Tier 1 Do-Now, Tier 2 Heavy, Gated G1-G4/ENV/WAIT).
-  - `execute-unattended`: In-run execution loop with wrap-and-switch on blockers.
-  - `ungate-queue`: Interactive blocker release workflow sorted by cheapness.
-  - `close-out-the-run`: Clean wrap and remaining-blocker persistence.
-  - Unit tests + CLI tooling (`bin/agy_rtc.py`).
+### Phase 2: Local Intelligence & Session Continuity Upgrades
+- [ ] **`agy-local-delegate` (v0.13.9 Upgrade)**: Auto-classifier, profile controls, Rapid venv watcher.
+- [ ] **`agy-audit-loose-ends` (v0.5.5 Upgrade)** & **`agy-resume-interrupted` (v0.4.0 Upgrade)**: Match window fixes, secret scanner, deep trajectory crash analyzer.
+- [ ] **`agy-run-to-completion` (v0.5.0 Upgrade)**: Full 5-tier autonomous execution loop and post-push verification.
+- [ ] **`agy-brief-agents` (v0.1.4 Upgrade)**: Comprehensive briefing index with live rule cache.
 
-### Phase 3: Hardware Offload & Local Intelligence
-- [x] **`agy-local-delegate`** (Skill: `local-delegate`):
-  - Local MLX / OpenAI-compatible model delegation for Apple Silicon (Qwen 2.5/3.6, DeepSeek R1, Gemma 4, Devstral).
-  - Safe file attachments bundling with context overflow guard.
-  - Health check & server probing CLI (`bin/agy_local_delegate.py`).
-  - Unit tests (`tests/test_local_delegate.py`).
+### Phase 3: Advanced Tooling, Distillation & Desktop Bridge
+- [ ] **`agy-transcript-distiller` (v0.8.0 Port)**: Line-addressable markdown capsule generator and CLI.
+- [ ] **`agy-cost-tracker` (v0.4.0 Port)**: Token cost projector and gateway calibrator.
+- [ ] **`agy-desktop-sync` (v1.0.2 Port)**: Bidirectional MCP and settings synchronization between CLI and IDE.
+- [ ] **`agy-compact-session` (v0.1.0 Port)**: Session history compaction.
+- [ ] **`agy-no-hidden-changes` (v1.4.3 Tooling)**: Hermetic validation harness and shadow file guards.
 
-### Phase 4: Suite Distribution, Advanced Distillation & Sync
-- [ ] **`get-antigravity` (Package Hub & Updater)**:
-  - Version-drift checks, skip-lists (`.agy-skip.json`), selective package install/sync (`--only`, `--category`).
-- [ ] **`agy-desktop-sync`**:
-  - Full bidirectional MCP and config mirror between Antigravity CLI and Desktop / IDE.
-- [ ] **`agy-transcript-distiller`** (Skill: `transcript-distiller`):
-  - Distills AGY `transcript.jsonl` into line-addressable, noise-free markdown capsules (low priority).
-
-### Phase 5: App Probing & Audio Helpers (Post-Phase 4)
-- [ ] **`agy-mcp-smoke-test`** (Skill: `mcp-smoke-test`):
-  - 4-part probe & test harness for app-controlling MCP servers (DaVinci Resolve, Blender, Adobe).
-- [ ] **`agy-turn-speak`** (Skill: `turn-speak`):
-  - macOS `say` and OpenAI TTS integration for hands-free voice workflows.
+### Phase 4: Media MCP & Audio Helpers (Tabled)
+- [ ] **`agy-mcp-smoke-test`**: Verification harness for media MCP servers.
+- [ ] **`agy-turn-speak`**: On-demand response audio playback.

@@ -1,20 +1,45 @@
-"""Pure, unit-testable core for the waypoints reminder in Google Antigravity.
+"""Pure, unit-testable core for the waypoints reminder.
 
-Store schema (~/.gemini/waypoints.json, overridable via $WAYPOINTS_FILE):
+NEVER hand-edit the store JSON. Every change goes through this module (or `waypoints.py`).
+One botched escape does not damage one item — json.load then fails for the WHOLE file, and
+every item becomes unreadable at once. This happened on 2026-09-03.
+
+No Claude/session dependency. I/O helpers (load/save/archive_path/today) are thin and
+env-overridable so the hook, the CLI, and the tests all share one implementation.
+
+Store schema (`~/.claude/waypoints.json`, overridable via $WAYPOINTS_FILE):
     {"version": 1, "items": [
-        {"id","title","summary","detail","surface_on"(YYYY-MM-DD|null),"created"(YYYY-MM-DD),"done"(bool),"priority"(int)}
+        {"id","title","detail","surface_on"(YYYY-MM-DD|null),"created"(YYYY-MM-DD),"done"(bool)}
     ]}
 
-`surface_on` is the EARLIEST date an item should appear — NOT an expiry.
-An item surfaces on and after that date and persists every session until explicitly marked done.
+`surface_on` is the EARLIEST date an item should appear — NOT an expiry. An item surfaces on
+and after that date and persists every session until explicitly marked done.
+
+Items pass through four tiers of record-keeping:
+
+    open      -> shown in the SessionStart banner
+    done      -> in the live store, hidden from the banner, still reopenable
+    archived  -> moved OUT of the live store into the archive file, still readable, restorable
+    deleted   -> gone; reachable only from `archived`, only via the deliberate two-step
+
+The closed list (done, then archived) is a deliberate PAPER TRAIL — used to reconstruct after
+the fact where an error slipped in. So nothing that runs routinely destroys it, and permanent
+deletion is an obscure command that cannot fire by accident.
 """
+import datetime
+import glob
 import json
 import os
 import re
+import shutil
+import sys
 import tempfile
-from datetime import date
+import textwrap
 
 VERSION = 1
+
+# Sentinel for edit_item: distinguishes "caller didn't pass this field" (leave as-is) from
+# "caller explicitly set it to None/empty" (e.g. clearing surface_on). Plain None can't do both.
 _UNSET = object()
 
 
@@ -30,45 +55,567 @@ def store_path():
     return gemini_path
 
 
+def archive_path(store=None):
+    """Where archived (closed-and-pruned) items live. Derived from the store path by suffix,
+    so $WAYPOINTS_FILE overrides both — tests point the pair at tmp_path in one env var."""
+    store = store or store_path()
+    return os.path.splitext(store)[0] + "-archive.json"
+
+
+# How many recent snapshots the ring keeps, beyond the per-day baselines. A wrap-up burst can
+# write a dozen times in a minute, so this has to be comfortably larger than one burst or the
+# burst evicts the pre-session state — the one snapshot most worth having.
+#
+# 0.5.0 lowered this from 20 to 10. The ring no longer carries the history: the journal does,
+# permanently and at a fraction of the size, so a snapshot is now only a convenience for the
+# crude "put the whole file back" recovery. Ten still clears one wrap-up burst.
+BACKUP_KEEP_RECENT = 10
+
+# How many day-baselines (the first snapshot of each calendar day) survive the ring. These are
+# what make a burst non-destructive: promoting them out of the recent window means no amount of
+# same-day churn can evict the state a day began in.
+BACKUP_KEEP_DAILY = 30
+
+# Only files matching this exact shape are ours, and ONLY ours are ever pruned. The store has
+# hand-made neighbours (e.g. waypoints.json.bak-reconcile-20260731-025549 from a past session);
+# a retention sweep that globbed loosely would delete those, destroying the very ad-hoc history
+# this layer exists to replace. Strict naming is the guard.
+#
+# Shape: <source-stem>.<YYYYmmdd>-<HHMMSS>-<micros>[-n].json — the STEM matters. The store and the
+# archive share one backup dir (one place to look, one policy), so without it their snapshots
+# would be indistinguishable after the fact and the dedupe check could compare a store against an
+# archive snapshot. Scoping by stem keeps the two histories separate inside the shared dir.
+_BACKUP_RE = re.compile(r"^(?P<stem>.+)\.(?P<day>\d{8})-\d{6}-\d{6}(?:-\d{3})?\.json$")
+
+
+def backup_dir(store=None):
+    """The tool-owned snapshot directory. A DEDICATED dir (not siblings of the store) so that
+    retention can never reach a file it did not create — see _BACKUP_RE."""
+    store = store or store_path()
+    return os.path.splitext(store)[0] + "-backups"
+
+
 def today():
-    """Today as YYYY-MM-DD; overridable via $WAYPOINTS_TODAY."""
-    return os.environ.get("WAYPOINTS_TODAY") or date.today().isoformat()
+    """Today as YYYY-MM-DD; overridable via $WAYPOINTS_TODAY (tests / manual)."""
+    return os.environ.get("WAYPOINTS_TODAY") or datetime.date.today().isoformat()
 
 
-def load_store(path=None):
+class StoreCorrupt(Exception):
+    """The store file exists but is not a readable store.
+
+    Raised instead of quietly returning an empty store, because "empty" is indistinguishable
+    from "you have no waypoints" — and on 2026-09-03 that difference was a silently vanished
+    banner plus a write that would have made the emptiness canonical. Carries everything a
+    caller needs to say something useful: what broke, where the damaged bytes were preserved,
+    and which backup is the newest one that actually parses.
+    """
+
+    def __init__(self, path, reason, quarantine=None, backups=()):
+        self.path = path
+        self.reason = reason
+        self.quarantine = quarantine
+        self.backups = list(backups)
+        super().__init__("%s is not a readable waypoints store: %s" % (path, reason))
+
+    @property
+    def newest_backup(self):
+        return self.backups[0][0] if self.backups else None
+
+    def report(self):
+        """The operator-facing refusal. One screen, and it ends with the command to type."""
+        lines = ["⛔ the waypoints store is unreadable — REFUSING to operate on it.",
+                 "   store:  %s" % self.path,
+                 "   reason: %s" % self.reason]
+        if self.quarantine:
+            lines.append("   the damaged file was COPIED to (kept out of the rotating backup "
+                         "ring, so it cannot age out):")
+            lines.append("           %s" % self.quarantine)
+        if self.backups:
+            newest, n = self.backups[0]
+            lines.append("   newest VALID backup: %s  (%d item%s)"
+                         % (newest, n, "" if n == 1 else "s"))
+            lines.append("   recover with:  waypoints.py recover        # uses that backup")
+            lines.append("                  waypoints.py recover --list # see all candidates")
+        else:
+            # Still name the command. A reader told only "no backup" has nowhere to go, and the
+            # next thing an agent reaches for in that state is the editor.
+            lines.append("   NO valid backup was found in %s — check `waypoints.py recover "
+                         "--list` yourself before concluding it is gone, and do NOT overwrite "
+                         "or hand-repair the store." % backup_dir(self.path))
+        lines.append("   Nothing was changed. Never hand-edit this file: every change goes "
+                     "through waypoints.py.")
+        return "\n".join(lines)
+
+
+# Where a corrupt store is preserved. Deliberately NOT in backup_dir and NOT matching
+# _BACKUP_RE: the ring is 10 deep and one busy day of another agent's writes evicted the
+# 2026-09-03 evidence before it could be examined. A corruption copy is forensics, not a
+# convenience snapshot, so retention must never be able to reach it.
+CORRUPT_STAMP_FMT = "%Y%m%d-%H%M%S"
+
+
+def corrupt_copy_path(path=None, when=None):
+    path = path or store_path()
+    stamp = (when or datetime.datetime.now()).strftime(CORRUPT_STAMP_FMT)
+    return "%s.corrupt-%s" % (path, stamp)
+
+
+def quarantine_corrupt(path=None, when=None):
+    """Preserve the damaged bytes beside the store. Returns the copy's path, or an existing
+    copy with identical contents (so repeated reads of one corrupt file don't litter).
+
+    Never raises: preserving evidence must not become a second failure mode on top of the
+    first. A failed copy returns None and the caller still refuses to operate.
+    """
     path = path or store_path()
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        if not isinstance(d, dict) or not isinstance(d.get("items"), list):
-            raise ValueError("bad shape")
-        return d
-    except FileNotFoundError:
-        return {"version": VERSION, "items": []}
+        with open(path, "rb") as f:
+            damaged = f.read()
+        for prior in sorted(glob.glob("%s.corrupt-*" % path), reverse=True):
+            try:
+                with open(prior, "rb") as f:
+                    if f.read() == damaged:
+                        return prior
+            except OSError:
+                continue
+        dst = corrupt_copy_path(path, when)
+        n = 0
+        while os.path.exists(dst):
+            n += 1
+            dst = "%s-%03d" % (corrupt_copy_path(path, when), n)
+        with open(dst, "wb") as f:
+            f.write(damaged)
+        os.chmod(dst, 0o600)
+        return dst
     except Exception:
-        return {"version": VERSION, "items": []}
+        return None
 
 
-def save_store(store, path=None):
+def _validate_store(d):
+    if not isinstance(d, dict) or not isinstance(d.get("items"), list):
+        raise ValueError("not a store object (expected a dict with an \"items\" list)")
+    return d
+
+
+def valid_backups(store=None):
+    """Our snapshots of the store that actually PARSE, newest first, as (path, item_count).
+
+    "Newest" is not good enough on its own: a snapshot taken between a corrupting hand-edit
+    and the next read is itself corrupt, so the recovery target has to be chosen by validity.
+    """
+    store = store or store_path()
+    out = []
+    for _, _, p in reversed(_existing_backups(backup_dir(store), _backup_stem(store))):
+        try:
+            with open(p) as f:
+                d = _validate_store(json.load(f))
+        except Exception:
+            continue
+        out.append((p, len(d["items"])))
+    return out
+
+
+def load_store(path=None, strict=True):
+    """Read the store. `strict` (the default) RAISES StoreCorrupt on damaged content.
+
+    strict=False keeps the old fail-safe empty return, and exists for the two callers that
+    genuinely must not raise: save_store's before-image (a write of valid data must still be
+    able to land on top of a broken file) and any read whose failure mode is cosmetic.
+    """
     path = path or store_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(store, f, indent=2, ensure_ascii=False)
-            f.write("\n")
+        with open(path) as f:
+            d = json.load(f)
+        return _validate_store(d)
+    except FileNotFoundError:
+        # A missing store is not corruption — it is a first run. Distinguishing the two is
+        # the whole point: only one of them means "stop and recover".
+        return {"version": VERSION, "items": []}
+    except Exception as e:
+        if not strict:
+            return {"version": VERSION, "items": []}
+        raise StoreCorrupt(path, "%s: %s" % (type(e).__name__, e),
+                           quarantine=quarantine_corrupt(path),
+                           backups=valid_backups(path))
+
+
+def recover_store(backup=None, path=None, argv=None):
+    """Put a valid backup back in place of an unreadable/wrong store, JOURNALLED.
+
+    A file-level `cp` leaves no trace in waypoints-journal.jsonl (which records commands), so
+    "the store went backwards" was invisible in its own history — this is the sanctioned path
+    that both restores AND records. Returns (backup_used, item_count, quarantine_path).
+    """
+    path = path or store_path()
+    if backup is None:
+        cands = valid_backups(path)
+        if not cands:
+            raise FileNotFoundError("no valid backup found in %s" % backup_dir(path))
+        backup = cands[0][0]
+    with open(backup) as f:
+        data = _validate_store(json.load(f))
+    quarantined = quarantine_corrupt(path) if os.path.exists(path) else None
+    save_store(data, path, argv=argv or ["recover", backup])
+    return backup, len(data["items"]), quarantined
+
+
+def _atomic_write(path, text):
+    """Replace `path` atomically within its own directory."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
 
 
+BACKUP_STAMP_FMT = "%Y%m%d-%H%M%S-%f"  # sub-second: see _backup_stamp
+
+
+def _backup_stamp(when=None):
+    """The snapshot name's time field, at MICROSECOND precision.
+
+    O_EXCL already guarantees uniqueness, so this is not what prevents a clobber — it is what
+    keeps names naturally ordered and collision-suffix-free. At second granularity a burst of
+    twenty writes lands twenty items in one stamp and every one after the first needs a `-NNN`
+    suffix, which is both unreadable and one more thing to sort correctly.
+    """
+    return (when or datetime.datetime.now()).strftime(BACKUP_STAMP_FMT)
+
+
+def _backup_stem(path):
+    """The source-file marker embedded in a snapshot's name (e.g. `waypoints`, `waypoints-archive`)."""
+    return os.path.basename(os.path.splitext(path)[0])
+
+
+def _existing_backups(directory, stem):
+    """Our snapshots of ONE source file, oldest first. Anything not matching _BACKUP_RE, or
+    belonging to another source, is invisible here — which is what makes retention safe."""
+    out = []
+    for p in glob.glob(os.path.join(directory, "*.json")):
+        m = _BACKUP_RE.match(os.path.basename(p))
+        if m and m.group("stem") == stem:
+            out.append((os.path.basename(p), m.group("day"), p))
+    out.sort()  # lexicographic == chronological, given the fixed-width stamp
+    return out
+
+
+def _unique_backup_path(directory, stem, stamp):
+    """Mint a backup path that is GUARANTEED unused, and return it with an open fd.
+
+    Second-granularity names collide: several writes inside one second produced one file and
+    silently overwrote the earlier snapshots. Microseconds make a clash unlikely; O_EXCL makes
+    it impossible by letting the filesystem arbitrate instead of a look-then-write race.
+    """
+    for n in range(1000):
+        # ALWAYS suffixed, and zero-padded. Both matter for ordering, because _existing_backups
+        # depends on lexicographic order meaning chronological order:
+        #   - unpadded, "-10" sorts before "-2";
+        #   - omitted on the first file, "<stamp>.json" sorts AFTER "<stamp>-001.json", since
+        #     "-" (0x2D) < "." (0x2E) — so the earliest snapshot would look like the newest.
+        tail = "%s-%03d" % (stamp, n)
+        path = os.path.join(directory, "%s.%s.json" % (stem, tail))
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            continue
+        return path, fd
+    raise OSError("could not mint a unique backup name in %s" % directory)
+
+
+def _prune_backups(directory, stem):
+    """Bound the snapshot ring without losing the day-baselines.
+
+    Keeps the newest BACKUP_KEEP_RECENT snapshots, PLUS the first snapshot of each of the most
+    recent BACKUP_KEEP_DAILY days. The daily tier is what survives a burst: a wrap-up that
+    closes fifteen items would otherwise push the pre-wrap-up state out of the window entirely.
+
+    Scoped to ONE source stem, so the store's ring and the archive's ring are bounded
+    independently. Only files matching _BACKUP_RE are considered, so a hand-made backup sitting
+    nearby is invisible to this and cannot be deleted by it.
+    """
+    ours = _existing_backups(directory, stem)
+    keep = {p for _, _, p in ours[-BACKUP_KEEP_RECENT:]}
+    first_of_day = {}
+    for name, day, path in ours:
+        first_of_day.setdefault(day, path)
+    for day in sorted(first_of_day)[-BACKUP_KEEP_DAILY:]:
+        keep.add(first_of_day[day])
+    removed = []
+    for _, _, path in ours:
+        if path not in keep:
+            try:
+                os.remove(path)
+                removed.append(path)
+            except OSError:
+                pass
+    return removed
+
+
+def _backup_before_write(path, store_for_dir=None):
+    """Snapshot the current file into the tool's backup dir before overwriting it.
+
+    COPIES (shutil.copy2) rather than moves. A move would unlink the store for the instant
+    between backup and rewrite: die in that window and the canonical path is simply absent,
+    load_store reads empty, and the banner goes silently blank — strictly worse than the 0.3.0
+    behaviour, where the original survived until the atomic replace. Copying keeps both the
+    crash-safety floor and the recovery layer.
+
+    Skips when the content is byte-identical to the newest snapshot: a no-op `edit` should not
+    consume a ring slot, because slots are what protect the older states.
+
+    Never raises. The backup is insurance, and a failed backup (permissions, full disk) must not
+    wedge the write that asked for it.
+    """
+    if not os.path.exists(path):
+        return None
+    try:
+        directory = backup_dir(store_for_dir or path)
+        os.makedirs(directory, exist_ok=True)
+        stem = _backup_stem(path)
+        existing = _existing_backups(directory, stem)
+        if existing:
+            with open(path, "rb") as a, open(existing[-1][2], "rb") as b:
+                if a.read() == b.read():
+                    return None  # unchanged since the last snapshot — nothing new to protect
+        stamp = _backup_stamp()
+        dst, fd = _unique_backup_path(directory, stem, stamp)
+        os.close(fd)
+        shutil.copy2(path, dst)
+        os.chmod(dst, 0o600)  # copy2 carries the source mode; pin it so a wide store cannot widen its backups
+        _prune_backups(directory, stem)
+        return dst
+    except OSError:
+        return None
+
+
+def save_store(store, path=None, argv=None):
+    """Persist the live store. BACKS UP the current file first — see _backup_before_write —
+    and JOURNALS what changed. A plain atomic write is recoverable from a crash but not from a
+    mistaken-but-valid command, and the closed items we prune away are the paper trail, not noise.
+
+    Journaling lives HERE, not in the CLI, because every mutation reaches disk through this
+    function: wiring it into each subcommand instead would leave the next subcommand unrecorded.
+    `argv` defaults to sys.argv[1:] so no call site has to remember to pass it, and stays a
+    parameter so tests (and any non-CLI caller) can state the command explicitly.
+    """
+    path = path or store_path()
+    before = load_store(path, strict=False)["items"]
+    _backup_before_write(path)
+    _atomic_write(path, json.dumps(store, indent=2, ensure_ascii=False) + "\n")
+    _journal_save(argv, before, store.get("items") or [], "store", path)
+    return path
+
+
+def load_archive(path=None):
+    """The archive store — same shape as the live store. Corrupt/missing reads as empty,
+    mirroring load_store's fail-safe: the archive is a reference copy, and a bad read of
+    it must never wedge a session that only came to move items into it."""
+    path = path or archive_path()
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        if not isinstance(d, dict) or not isinstance(d.get("items"), list):
+            raise ValueError("bad shape")
+        return d
+    except Exception:
+        return {"version": VERSION, "items": []}
+
+
+def save_archive(arch, path=None, argv=None):
+    """Persist the archive, backing up and journalling exactly like save_store — the archive IS
+    the paper trail, so it gets the same recoverable-write guarantee (append-only in spirit;
+    the backup is how a bad entry stays correctable). Its entries are tagged source="archive",
+    so a single `rm` shows as two lines — one removing the item from the store, one adding it
+    to the archive — and a move can be told apart from a loss."""
+    path = path or archive_path()
+    before = load_archive(path)["items"]
+    # store_path() so the archive's snapshots share the store's backup dir: one place to look
+    # when reconstructing, and one retention policy governing the pair.
+    _backup_before_write(path, store_path())
+    _atomic_write(path, json.dumps(arch, indent=2, ensure_ascii=False) + "\n")
+    # store_path() for the same reason the backups use it: one journal for the pair, so the
+    # history of a move reads in order instead of being split across two files.
+    _journal_save(argv, before, arch.get("items") or [], "archive", store_path())
+    return path
+
+
+# --- the journal: the authoritative history ---------------------------------------------
+#
+# Why a third layer, given the archive and the snapshot ring already exist: neither answers
+# "where did this go wrong". The archive records an item's FINAL state at closure; the ring is
+# BOUNDED (BACKUP_KEEP_RECENT), so an overwrite from three weeks ago is simply gone once its
+# snapshot ages out. A journal entry is one changed item plus the command that changed it —
+# roughly 50x smaller than a full-store snapshot — which is what lets it be permanent.
+#
+# The three layers are deliberately distinct, and merging them loses something each time:
+#   journal   -> authoritative history. Append-only, NEVER pruned. Small.
+#   snapshots -> a bounded convenience ring; freely deletable BECAUSE the journal exists.
+#   archive   -> the human-readable closure trail.
+#
+# Store + journal replayed backwards reconstructs any prior state, so nothing outside the
+# journal has to be durable for the history to survive.
+
+JOURNAL_CONTRACT = 1
+
+
+def journal_path(store=None):
+    """Where the mutation history lives. Derived from the store path exactly like the archive
+    and the backup dir, so $WAYPOINTS_FILE redirects the whole family with one env var.
+
+    `.jsonl`, not `.json`: one self-contained line per mutation is what makes an append a
+    single small write and a truncated tail skippable instead of fatal.
+    """
+    store = store or store_path()
+    return os.path.splitext(store)[0] + "-journal.jsonl"
+
+
+def _journal_stamp(when=None):
+    """Second-precision ISO stamp whose DATE half comes from today(), so $WAYPOINTS_TODAY moves
+    the journal's clock along with the rest of the tool — `--since` is date-based, and a fake
+    clock that only half-applied would make the filter untestable."""
+    if when is not None:
+        return when
+    return "%sT%s" % (today(), datetime.datetime.now().strftime("%H:%M:%S"))
+
+
+def _by_id(items):
+    """{id: (position, item)} for the well-formed entries. Malformed rows are skipped rather
+    than raising: the journal must never be the reason a mutation fails."""
+    out = {}
+    for pos, it in enumerate(items or []):
+        if isinstance(it, dict) and it.get("id"):
+            out[it["id"]] = (pos, it)
+    return out
+
+
+def diff_items(before, after):
+    """Per-item changes between two item lists, as [{id, before, after[, moved]}].
+
+    A generic differ rather than per-command bookkeeping. There are ~19 save call sites; a
+    record that has to be remembered at each one will be forgotten at the twentieth, and a
+    history with silent holes is worse than none because it reads as complete. Diffing also
+    records what actually CHANGED rather than what a command meant to change — the effect is
+    what a forensic reader needs, and the two are not always the same.
+
+    `moved` carries the before/after list positions when only the ORDER changed, so `reorder`
+    is not invisible: it mutates the store while leaving every item's fields untouched.
+    """
+    b, a = _by_id(before), _by_id(after)
+    order = list(b) + [k for k in a if k not in b]
+    out = []
+    for item_id in order:
+        b_pos, was = b.get(item_id, (None, None))
+        a_pos, now = a.get(item_id, (None, None))
+        if was == now and b_pos == a_pos:
+            continue
+        change = {"id": item_id, "before": was, "after": now}
+        if was == now and b_pos != a_pos:
+            change["moved"] = [b_pos, a_pos]
+        out.append(change)
+    return out
+
+
+def journal_entry(argv, changes, source="store", when=None):
+    """One mutation, ready to append.
+
+    `argv` is stored RAW, not prettified. The literal command is the forensic artifact — a
+    rendered description reflects what the code believed it was doing, which is precisely the
+    thing under suspicion when someone reads the journal.
+    """
+    return {"contract": JOURNAL_CONTRACT, "at": _journal_stamp(when),
+            "source": source, "argv": list(argv or []), "changes": changes}
+
+
+def append_journal(entry, path=None, store=None):
+    """Append ONE line, and never raise.
+
+    O_APPEND (plus a single small os.write) so two concurrent writers interleave whole lines
+    instead of overwriting each other's offsets — the same reason the store uses os.replace.
+    Failure returns None: recording a mutation must not be able to fail the mutation, which is
+    the contract _backup_before_write already established for the insurance layers.
+    """
+    try:
+        path = path or journal_path(store)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        line = json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, line.encode("utf-8"))
+        finally:
+            os.close(fd)
+        return path
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _journal_save(argv, before, after, source, store_for_path):
+    """Journal one save, if it changed anything. A no-op write earns no entry, for the same
+    reason it earns no snapshot: noise costs the reader more than the empty record informs.
+
+    The never-raise contract is enforced HERE, at the boundary save_store calls, not merely
+    inside append_journal. Depending on the inner function to stay polite means any future
+    change to it (or to diff_items) could start failing real mutations, and losing a waypoint
+    to protect a record of that waypoint is the wrong trade in every case.
+    """
+    try:
+        changes = diff_items(before, after)
+        if not changes:
+            return None
+        if argv is None:
+            argv = sys.argv[1:]
+        return append_journal(journal_entry(argv, changes, source), store=store_for_path)
+    except Exception:
+        return None
+
+
+def read_journal(path=None, item_id=None, since=None, store=None):
+    """Entries oldest-first, optionally filtered by item id and by `since` (a YYYY-MM-DD date
+    or a full stamp; compared as strings, which the ISO layout makes correct).
+
+    A malformed line is SKIPPED, mirroring load_store's fail-safe. Every mutation appends here,
+    so a crash mid-append or a full disk can leave a partial tail; degrading to "one entry
+    missing" keeps the other thousand readable, whereas a parse error on the whole file would
+    lose the history exactly when someone finally needed it.
+    """
+    path = path or journal_path(store)
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = list(f)
+    except OSError:
+        return out
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        if since and str(e.get("at") or "") < since:
+            continue
+        if item_id:
+            changes = e.get("changes") or []
+            if not any(isinstance(c, dict) and c.get("id") == item_id for c in changes):
+                continue
+        out.append(e)
+    return out
+
+
 def slugify(title, maxlen=30):
+    """Kebab id from a title, capped at maxlen. Capping matters because a bloated title (the
+    thing an `edit` command now prevents) would otherwise yield a monstrous, unusable id."""
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     if len(s) > maxlen:
         cut = s[:maxlen]
         if "-" in cut:
-            cut = cut.rsplit("-", 1)[0]
+            cut = cut.rsplit("-", 1)[0]  # drop the partial trailing word for a clean boundary
         s = cut.strip("-")
     return s or "item"
 
@@ -83,29 +630,311 @@ def _unique_id(items, base):
     return f"{base}-{n}"
 
 
-def add_item(items, title, detail="", surface_on=None, created=None, id=None, summary=None, priority=0):
+# --- Optional triage verdict ----------------------------------------------------------------
+# A verdict says how an item can be picked up: `do-now` (bounded and self-contained), `heavy`
+# (doable alone but liable to sprawl), `gated` (needs something this store cannot supply), or
+# `waiting` (blocked, but only on ANOTHER ITEM IN THIS STORE reaching a milestone).
+#
+# The keys are ABSENT by default, not defaulted: an item nobody has assessed carries none of
+# them, so every store written before this existed stays valid with no migration. "Untriaged" is
+# a real state and NOT a synonym for actionable — an item nobody has looked at is not thereby
+# known to be unblocked. Views keep the states separate for exactly that reason.
+#
+# `waiting` was split out of `gated` on evidence, not taste. Distinguishing the four kinds of
+# block by WHAT RELEASES THEM is the whole point, because each needs a different mechanism and a
+# different owner: a PERSON (released by asking), a QUEUE ITEM (released when that item hits a
+# milestone), a RECURRING WORLD CONDITION, an EXTERNAL PARTY. Only the second kind is both
+# mechanical and knowable from inside this store, which is why only it earns a tier: the target
+# is an id we hold, so the store can re-check it for free and promote the item ITSELF. The other
+# three stay prefixes inside `gated`, since a shared state that carried no shared behaviour
+# would be a label pretending to be a mechanism.
+TIERS = ("do-now", "heavy", "gated", "waiting")
+GATED = "gated"
+WAITING = "waiting"
+ACTIONABLE_TIERS = ("do-now", "heavy")
+
+# A waiting target is REQUIRED to name a milestone, not just an item: "when X is done" is often
+# not the trigger — the thing you are waiting for is frequently a specific point partway through
+# X. A bare id would quietly lose that, and losing it is what makes a dependency untraversable.
+WAITING_ON_RE = re.compile(r"^\s*(?P<id>[^\s@]+)\s*@\s*(?P<milestone>\S.*?)\s*$")
+
+
+class VerdictError(ValueError):
+    """An invalid tier, a gate reason on an item that isn't gated, or a malformed/missing
+    waiting target on an item that is waiting."""
+
+
+def normalize_waiting_on(waiting_on):
+    """Coerce a target spec to a LIST of '<item-id> @ <milestone>' strings.
+
+    A single string is accepted for convenience and stored as a one-element list, so the field has
+    exactly one shape on disk. Multiple targets are a real case, not a hypothetical: of the first
+    fifteen items migrated into this tier, three waited on two-to-four other items at once, so a
+    single-target field would have forced either an ungroundable guess about which dependency
+    binds last, or leaving a fifth of the pile unmigrated."""
+    if waiting_on is None or waiting_on == "":
+        return []
+    if isinstance(waiting_on, str):
+        return [waiting_on]
+    return [w for w in waiting_on if w]
+
+
+def parse_waiting_on(waiting_on):
+    """Every target as (id, milestone). Raises VerdictError if any entry lacks both halves, so a
+    target can never degrade into unparseable prose."""
+    out = []
+    for entry in normalize_waiting_on(waiting_on):
+        m = WAITING_ON_RE.match(entry)
+        if not m:
+            raise VerdictError(
+                "a waiting target must read '<item-id> @ <milestone>' (got %r). The milestone is "
+                "required: 'when that item is done' is often not the trigger." % (entry,))
+        out.append((m.group("id"), m.group("milestone")))
+    if not out:
+        raise VerdictError("a waiting target cannot be empty")
+    return out
+
+
+def validate_verdict(tier, gate_reason=None, waiting_on=None):
+    """Raise VerdictError on a contradictory verdict; return the verdict fields unchanged.
+
+    A gate reason on a non-gated item is refused rather than quietly stored: it would be a
+    record that disagrees with itself, and the reason is what a reader acts on. The same rule
+    applies to a waiting target on a non-waiting item — and, symmetrically, a `waiting` item
+    with NO target is refused too, because an untargeted 'waiting' is exactly the unfalsifiable
+    label this tier exists to replace.
+    """
+    if tier is not None and tier not in TIERS:
+        raise VerdictError("tier must be one of %s (got %r)" % (", ".join(TIERS), tier))
+    if gate_reason and tier is not None and tier != GATED:
+        raise VerdictError("a gate reason only applies to a %r item (tier is %r)" % (GATED, tier))
+    if waiting_on and tier is not None and tier != WAITING:
+        raise VerdictError("a waiting target only applies to a %r item (tier is %r)"
+                           % (WAITING, tier))
+    if tier == WAITING and not waiting_on:
+        raise VerdictError(
+            "a %r item needs --waiting-on '<item-id> @ <milestone>': the whole point of the "
+            "tier is that the store can re-check the target itself" % (WAITING,))
+    if waiting_on:
+        parse_waiting_on(waiting_on)
+    return tier, gate_reason, normalize_waiting_on(waiting_on) or None
+
+
+def tier_of(item):
+    """The item's tier, or None when it has never been triaged."""
+    return item.get("tier")
+
+
+def is_gated(item):
+    return item.get("tier") == GATED
+
+
+def is_waiting(item):
+    return item.get("tier") == WAITING
+
+
+def is_actionable(item):
+    return item.get("tier") in ACTIONABLE_TIERS
+
+
+def is_untriaged(item):
+    return item.get("tier") is None
+
+
+def partition(items):
+    """Split into the four verdict groups. Every item lands in exactly one, so the counts
+    always add up to the input length — a reader can verify nothing was dropped.
+
+    `waiting` is its OWN group rather than being folded into either neighbour, because it
+    behaves like neither: it cannot be started now (so it is not actionable) but it needs no
+    human and releases itself (so burying it with the human-gated pile would hide the
+    dependency cascade)."""
+    return {"gated": [i for i in items if is_gated(i)],
+            "waiting": [i for i in items if is_waiting(i)],
+            "actionable": [i for i in items if is_actionable(i)],
+            "untriaged": [i for i in items if is_untriaged(i)]}
+
+
+def set_verdict(items, item_id, tier=_UNSET, gate_reason=_UNSET, waiting_on=_UNSET):
+    """Set or clear an item's verdict in place. Pass tier=None to clear the verdict entirely
+    (which also drops any gate reason or waiting target, since they would be orphaned). Returns
+    the item, or None if no such id. Raises VerdictError on a contradictory combination.
+
+    ⚠️ Retiering AWAY from gated silently drops gate_reason, and away from waiting drops
+    waiting_on — by design, since each is meaningless without its tier. That is why a migration
+    that moves prose out of gate_reason into waiting_on must do BOTH IN ONE CALL: setting the
+    tier first and the target second loses the prose in between, and the prose is often the only
+    record of what the item was actually waiting for."""
+    it = get_item(items, item_id)
+    if it is None:
+        return None
+    new_tier = it.get("tier") if tier is _UNSET else tier
+    if gate_reason is _UNSET:
+        # An inherited reason is only meaningful while the item stays gated. Retiering to
+        # do-now/heavy drops it rather than erroring: the reason is orphaned by definition, so
+        # demanding a second call to clear it would buy nothing. An EXPLICIT reason passed
+        # alongside a non-gated tier is a different thing — a contradiction of intent — and
+        # validate_verdict still refuses that.
+        new_reason = it.get("gate_reason") if new_tier == GATED else None
+    else:
+        new_reason = gate_reason
+    if waiting_on is _UNSET:
+        new_waiting = it.get("waiting_on") if new_tier == WAITING else None
+    else:
+        new_waiting = waiting_on
+    if new_tier is None:
+        new_reason = None
+        new_waiting = None
+    _t, _g, new_waiting = validate_verdict(new_tier, new_reason, new_waiting)
+    # Absent, not null: a cleared verdict removes the keys so the item is byte-identical to
+    # one that was never triaged. Anything else would leak a tombstone into the store.
+    for key, val in (("tier", new_tier), ("gate_reason", new_reason),
+                     ("waiting_on", new_waiting)):
+        if val:
+            it[key] = val
+        else:
+            it.pop(key, None)
+    return it
+
+
+# ---------------------------------------------------------------------------------------
+# Waiting-target resolution. A waiting item names a target it holds in this very store, so
+# re-checking it costs nothing and needs no human — which is precisely what makes `waiting`
+# a mechanism rather than a label.
+# ---------------------------------------------------------------------------------------
+
+WAITING_PENDING = "pending"    # the target exists and is still open
+WAITING_LANDED = "landed"      # the target is done (or archived as done) -> promote
+WAITING_STALE = "stale"        # the target id is nowhere to be found -> warn, never guess
+
+
+def waiting_targets(item, items, archived=()):
+    """Per-target detail: [(target_id, milestone, status)]. [] if the spec is unparseable."""
+    try:
+        pairs = parse_waiting_on(item.get("waiting_on"))
+    except VerdictError:
+        return []
+    out = []
+    for target_id, milestone in pairs:
+        target = get_item(items, target_id) or get_item(list(archived), target_id)
+        if target is None:
+            st = WAITING_STALE
+        elif target.get("done"):
+            st = WAITING_LANDED
+        else:
+            st = WAITING_PENDING
+        out.append((target_id, milestone, st))
+    return out
+
+
+def waiting_status(item, items, archived=()):
+    """Where a waiting item stands overall: (status, target_id, milestone).
+
+    With several targets the item releases only when ALL of them have landed — an item blocked on
+    two things is not unblocked by one of them. Conversely a SINGLE missing target makes the whole
+    spec stale, because the store then disagrees with itself and no partial answer is trustworthy.
+
+    A target that does not exist at all is `stale` rather than landed: an id that was renamed or
+    removed must never silently satisfy a dependency, since that is indistinguishable from the
+    work having happened. The reported (target_id, milestone) is the one that EXPLAINS the verdict
+    — the offending target when stale, the first still-pending one otherwise — so a caller has
+    something specific to show rather than a bare state."""
+    detail = waiting_targets(item, items, archived)
+    if not detail:
+        return WAITING_STALE, None, None
+    for tid, ms, st in detail:
+        if st == WAITING_STALE:
+            return WAITING_STALE, tid, ms
+    for tid, ms, st in detail:
+        if st == WAITING_PENDING:
+            return WAITING_PENDING, tid, ms
+    return WAITING_LANDED, detail[0][0], detail[0][1]
+
+
+def waiting_on_str(item):
+    """The target spec as one short human-readable line, for the banner and the compact list."""
+    return " + ".join(normalize_waiting_on(item.get("waiting_on")))
+
+
+def promote_landed_waiting(items, archived=(), today_str=None):
+    """Retier every waiting item whose target has landed. Returns the list of
+    (item, target_id, milestone) promoted, so a caller can announce them.
+
+    Promotion clears the tier to UNTRIAGED rather than guessing do-now or heavy. The item's own
+    weight was never recorded — `tier` was holding `waiting` — so inventing one would be a
+    verdict nobody made. Untriaged is the honest state and is a real view, so the item surfaces
+    for triage instead of being quietly assumed bounded. The target and milestone are written
+    into the summary on the way out, because dropping waiting_on would otherwise erase the only
+    record of why the item had been parked."""
+    today_str = today_str or today()
+    promoted = []
+    for it in list(items):
+        if it.get("done") or not is_waiting(it):
+            continue
+        status, target_id, milestone = waiting_status(it, items, archived)
+        if status != WAITING_LANDED:
+            continue
+        note = ("RELEASED %s: everything this was waiting on has landed — %s. Now untriaged on "
+                "purpose: its own weight was never assessed while it sat in `waiting`, so it "
+                "needs a verdict rather than an assumed one." % (today_str, waiting_on_str(it)))
+        it.setdefault("summary", []).append(note)
+        set_verdict(items, it["id"], tier=None)
+        promoted.append((it, target_id, milestone))
+    return promoted
+
+
+def stale_waiting(items, archived=()):
+    """Every waiting item whose target cannot be found: [(item, target_id)].
+
+    Surfaced rather than repaired. A dangling target means the store disagrees with itself, and
+    which side is wrong — a renamed target or a mistyped dependency — is not something the store
+    can know."""
+    out = []
+    for it in items:
+        if it.get("done") or not is_waiting(it):
+            continue
+        status, target_id, _ = waiting_status(it, items, archived)
+        if status == WAITING_STALE:
+            out.append((it, target_id))
+    return out
+
+
+def add_item(items, title, detail="", surface_on=None, created=None, id=None, summary=None,
+             tier=None, gate_reason=None, waiting_on=None):
+    validate_verdict(tier, gate_reason, waiting_on)
     item = {
         "id": id or _unique_id(items, slugify(title)),
         "title": title,
-        "summary": list(summary) if summary else [],
-        "detail": detail or "",
+        "summary": list(summary) if summary else [],  # short banner bullets (on-screen tier)
+        "detail": detail or "",                        # full continuity dump (on-demand tier)
         "surface_on": surface_on,
         "created": created or today(),
         "done": False,
-        "priority": priority or 0,
+        "priority": 0,                                  # higher sorts earlier in the banner
     }
+    if tier:
+        item["tier"] = tier
+    if gate_reason:
+        item["gate_reason"] = gate_reason
+    if waiting_on:
+        item["waiting_on"] = normalize_waiting_on(waiting_on)
     items.append(item)
     return item
 
 
 def get_item(items, item_id):
+    """Return the item dict with this id, or None."""
     for i in items:
         if i.get("id") == item_id:
             return i
     return None
 
 
-def edit_item(items, item_id, title=_UNSET, summary=_UNSET, detail=_UNSET, surface_on=_UNSET, priority=_UNSET):
+def edit_item(items, item_id, title=_UNSET, summary=_UNSET, detail=_UNSET, surface_on=_UNSET):
+    """Update an existing item in place; only fields explicitly passed change. `id` and `created`
+    are intentionally immutable — a stable id is the whole reason this exists (the old
+    done+re-add workaround regenerated the id and lost the created date). Returns the item, or
+    None if no such id. Pass surface_on=None to CLEAR a date (vs the _UNSET default = leave it)."""
     it = get_item(items, item_id)
     if it is None:
         return None
@@ -117,47 +946,527 @@ def edit_item(items, item_id, title=_UNSET, summary=_UNSET, detail=_UNSET, surfa
         it["detail"] = detail
     if surface_on is not _UNSET:
         it["surface_on"] = surface_on
-    if priority is not _UNSET:
-        it["priority"] = priority
     return it
 
 
-def mark_done(items, item_id, outcome=None):
+# Leading words that make a title read as an unanswered inquiry/decision rather than a task. A ✓
+# on "Confirm X" / "Decide Y" hides the ANSWER (did it work? what was decided?), which is the
+# prose-vs-status contradiction this guard exists to catch. Plain task imperatives (fix, add,
+# build, publish, finish, run…) are intentionally NOT here — "Fix login bug ✓" reads fine as done.
+_INQUIRY_LEADERS = frozenset({
+    "confirm", "verify", "check", "test", "decide", "research", "investigate",
+    "evaluate", "determine", "assess", "explore", "compare", "figure", "whether",
+    "should", "head-to-head",
+})
+
+
+def looks_unresolved(title):
+    """True if `title` reads as an open question/decision that a bare ✓ would leave contradictory.
+    Pure and side-effect-free so the CLI guard and tests share one definition. Matches a trailing
+    '?' or a leading inquiry/decision verb (see _INQUIRY_LEADERS)."""
+    t = (title or "").strip()
+    if not t:
+        return False
+    if t.rstrip().endswith("?"):
+        return True
+    first = re.split(r"[\s:]+", t.lower(), maxsplit=1)[0].strip(".,")
+    return first in _INQUIRY_LEADERS
+
+
+def mark_done(items, item_id, resolved_title=None):
+    """Mark an item done. If `resolved_title` is given, rewrite the title to that resolution phrasing
+    first (the one-call replacement for edit+done) — `id`/`created` stay immutable, same as `edit`.
+    Returns True if the item existed."""
+    for i in items:
+        if i.get("id") == item_id:
+            if resolved_title is not None:
+                i["title"] = resolved_title
+            i["done"] = True
+            return True
+    return False
+
+
+def reopen_item(items, item_id):
+    """Undo `done` on an item (the inverse of mark_done). Returns True if found."""
+    for i in items:
+        if i.get("id") == item_id:
+            i["done"] = False
+            return True
+    return False
+
+
+def toggle_done(items, item_id):
+    """Flip an item's done state. Returns the new state, or None if no such id."""
+    for i in items:
+        if i.get("id") == item_id:
+            i["done"] = not i.get("done", False)
+            return i["done"]
+    return None
+
+
+def is_pinned(item):
+    return bool(item.get("pinned"))
+
+
+def set_pinned(items, item_id, pinned, reason=None):
+    """Pin/unpin an item: "heavy, but do it now anyway", made machine-visible.
+
+    The gap this closes: tier ordering DOMINATES priority (a consumer runs the do-now pile
+    before anything heavy), so a user who wants a heavy item done today had no field to say so
+    — only a prose note no mechanism could see, and the number could not express it because
+    raising priority only reorders WITHIN a tier. Pinning is deliberately NOT "priority above
+    N": a threshold overloads a sort key with a policy, and cannot record WHY.
+
+    A reason is REQUIRED, for the same reason a gated item must name its gate and a waiting item
+    its milestone: an override with no recorded rationale is indistinguishable from a mistake a
+    month later, and this one exists precisely to overrule an honest verdict.
+
+    The verdict itself is left ALONE — a pinned heavy item stays heavy. Pinning changes when it
+    runs, never the assessment of how big it is; fudging the tier for scheduling is the failure
+    this field exists to prevent.
+    """
     it = get_item(items, item_id)
     if it is None:
         return None
-    it["done"] = True
-    if outcome:
-        it["title"] = outcome
+    if pinned:
+        if not (reason or "").strip():
+            raise ValueError("pinning requires a reason (why this outranks the tier order)")
+        it["pinned"] = True
+        it["pin_reason"] = reason.strip()
+    else:
+        it.pop("pinned", None)
+        it.pop("pin_reason", None)
     return it
 
 
-def surfaceable_items(items, now_date=None):
-    now_date = now_date or today()
-    res = []
+def split_pinned(items):
+    """(pinned, rest) preserving order. Display-only: pinned is an ORTHOGONAL flag, not a fifth
+    tier, so partition() stays four-way and its sum invariant is untouched. Renderers lift the
+    pinned items out so the override is impossible to miss."""
+    pinned = [i for i in items if is_pinned(i)]
+    rest = [i for i in items if not is_pinned(i)]
+    return pinned, rest
+
+
+def set_priority(items, item_id, priority):
+    """Set an item's priority (int; higher sorts earlier in the banner). Returns the item, or
+    None if no such id."""
+    it = get_item(items, item_id)
+    if it is None:
+        return None
+    it["priority"] = priority
+    return it
+
+
+def reorder_item(items, item_id, position):
+    """Move an item to a specific 0-based position within `items` (clamped to bounds). This
+    changes list order directly rather than `priority` — for the rare case of wanting explicit
+    manual ordering instead of a priority tier. Returns True if found."""
+    for idx, i in enumerate(items):
+        if i.get("id") == item_id:
+            it = items.pop(idx)
+            position = max(0, min(position, len(items)))
+            items.insert(position, it)
+            return True
+    return False
+
+
+def prune(items):
+    """Partition `items` into (kept, archived): every done item is REMOVED from the live
+    store and returned as the archive batch (stamped with `archived_at` so the trail
+    carries WHEN, not just WHAT). Never drops: the caller appends the batch to the
+    archive, so a prune is a move, and `restore`/`reopen` can put anything back.
+
+    The 0.3.0 contract returned a pruned list and destroyed the done items on save.
+    That made a single keystroke destroy the closure trail, so `reopen` — the safety
+    net that catches a premature close — was silently disarmed for everything pruned.
+    """
+    kept, archived = [], []
+    for i in items:
+        if i.get("done"):
+            i["archived_at"] = today()
+            archived.append(i)
+        else:
+            kept.append(i)
+    return kept, archived
+
+
+def surfaceable(items, today_str):
+    """Items to show now: not done, and (undated OR surface_on <= today). ISO dates sort
+    lexically, so a string <= comparison is correct. Sorted PINNED first, then priority
+    descending (stable, so equal-priority items keep their list/insertion order).
+
+    Pinned outranks priority rather than being a big number, so a pin can never be silently
+    out-bid by someone else's priority inflation."""
+    out = []
     for i in items:
         if i.get("done"):
             continue
-        soff = i.get("surface_on")
-        if soff and soff > now_date:
+        so = i.get("surface_on")
+        if so and so > today_str:
             continue
-        res.append(i)
-    # Sort by priority desc, then created date asc
-    res.sort(key=lambda x: (-x.get("priority", 0), x.get("created", "")))
-    return res
+        out.append(i)
+    out.sort(key=lambda i: (not is_pinned(i), -i.get("priority", 0)))
+    return out
 
 
-def format_banner(items, now_date=None):
-    open_items = surfaceable_items(items, now_date)
-    if not open_items:
+# --- Machine-readable list contract ---------------------------------------------------------
+# LIST_CONTRACT is versioned INDEPENDENTLY of the store's own `version`. That separation is the
+# whole point: a reader pins the output contract and the on-disk format stays free to change
+# underneath it. Documenting the raw store file instead would couple every reader to internals.
+LIST_CONTRACT = 3
+
+
+def list_payload(items, today_str=None):
+    """The `list --json` payload: a documented, stable view of the queue.
+
+    Shape (contract 1):
+      contract  int    — this contract's version, NOT the store's
+      generated str    — the date the view was computed (surfaceability depends on it)
+      counts    object — total, open, done, surfaceable, gated, actionable, untriaged, pinned
+      items     array  — every item, in store order, each with:
+                           id, title, summary[], detail, created, surface_on, done, priority,
+                           surfaceable (bool, computed), tier (str|null), gate_reason (str|null),
+                           waiting_on (array of "<id> @ <milestone>" strings, or null),
+                           pinned (bool), pin_reason (str|null)
+
+    `tier`/`gate_reason`/`waiting_on` are always PRESENT here and null when unset — a consumer
+    reading a view should not have to distinguish a missing key from a null one. In the STORE
+    they stay absent; that asymmetry is deliberate and belongs to the boundary between the two.
+
+    gated + waiting + actionable + untriaged == open, so a consumer can verify no item was
+    dropped.
+
+    CONTRACT 2 (was 1) added the `waiting` count and the `waiting_on` field. The version moved
+    because the sum invariant above CHANGED: a consumer that checked gated + actionable +
+    untriaged == open would now silently fail its own audit on any store containing a waiting
+    item. An additive field alone would not have justified a bump; a changed invariant does.
+
+    CONTRACT 3 (was 2) added `pinned`/`pin_reason` and a `pinned` count. Additive — the sum
+    invariant is UNCHANGED, because pinned is orthogonal to the tiers, not a fifth one: a
+    pinned item is still counted in exactly one of the four. The bump is here because the
+    field carries an ORDERING rule a consumer must honour to be correct — a pinned item runs
+    before the do-now pile despite its tier — and a consumer cannot discover that by shape.
+    """
+    today_str = today_str or today()
+    surf = {i["id"] for i in surfaceable(items, today_str)}
+    open_items = [i for i in items if not i.get("done")]
+    groups = partition(open_items)
+    out = []
+    for i in items:
+        out.append({
+            "id": i.get("id"),
+            "title": i.get("title", ""),
+            "summary": list(i.get("summary") or []),
+            "detail": i.get("detail", ""),
+            "created": i.get("created"),
+            "surface_on": i.get("surface_on"),
+            "done": bool(i.get("done")),
+            "priority": i.get("priority", 0),
+            "surfaceable": i.get("id") in surf,
+            "tier": i.get("tier"),
+            "gate_reason": i.get("gate_reason"),
+            "waiting_on": i.get("waiting_on"),
+            "pinned": is_pinned(i),
+            "pin_reason": i.get("pin_reason"),
+        })
+    return {
+        "contract": LIST_CONTRACT,
+        "generated": today_str,
+        "counts": {
+            "total": len(items),
+            "open": len(open_items),
+            "done": sum(1 for i in items if i.get("done")),
+            "surfaceable": len(surf),
+            "gated": len(groups["gated"]),
+            "waiting": len(groups["waiting"]),
+            "actionable": len(groups["actionable"]),
+            "untriaged": len(groups["untriaged"]),
+            "pinned": sum(1 for i in open_items if is_pinned(i)),
+        },
+        "items": out,
+    }
+
+
+ARCHIVE_CONTRACT = 1
+
+
+def archive_payload(items, today_str=None):
+    """The `archive list --json` payload: the closed-item paper trail, machine-readable.
+
+    Shape (contract 1):
+      contract  int    — this contract's version, independent of the store's and the list view's
+      generated str    — the date the view was computed
+      counts    object — total, restored (items that came back at least once)
+      items     array  — every archived item, in archive order (append order == closure order),
+                         each with: id, title, summary[], detail, created, done, priority,
+                         tier, gate_reason, archived_at, restored_at
+
+    Deliberately NOT list_payload: `surfaceable` is meaningless for an item that is not in the
+    live store, and reusing that shape would invite a consumer to treat the two as one queue.
+    `archived_at`/`restored_at` are always present and null when unset, matching list_payload's
+    rule that a view never makes a consumer distinguish a missing key from a null one.
+    """
+    out = []
+    for i in items:
+        out.append({
+            "id": i.get("id"),
+            "title": i.get("title", ""),
+            "summary": list(i.get("summary") or []),
+            "detail": i.get("detail", ""),
+            "created": i.get("created"),
+            "done": bool(i.get("done")),
+            "priority": i.get("priority", 0),
+            "tier": i.get("tier"),
+            "gate_reason": i.get("gate_reason"),
+            "archived_at": i.get("archived_at"),
+            "restored_at": i.get("restored_at"),
+        })
+    return {
+        "contract": ARCHIVE_CONTRACT,
+        "generated": today_str or today(),
+        "counts": {
+            "total": len(items),
+            "restored": sum(1 for i in items if i.get("restored_at")),
+        },
+        "items": out,
+    }
+
+
+COMPACT_THRESHOLD = 3
+
+# Mirrors COMPACT_THRESHOLD: past this many GATED items the group collapses to one counted line
+# rather than listing each. Set from COMPACT_THRESHOLD so the two stay consistent by default.
+#
+# What this deliberately does NOT do: reorder anything. Gated items keep their priority position
+# among the rest and are marked in place — sorting them last would encode an assumption that
+# something else consumes the other pile, i.e. a preference baked into the store's own output.
+# Collapse triggers on GROUP LENGTH alone. The count stays visible either way, so a collapsed
+# group is disclosed rather than hidden.
+#
+# The one apparent exception is not one: when the group DOES collapse, its items are not rendered
+# at all, so there is no position left to preserve — the summary line lands at the end because
+# that is where a summary belongs, not because gated work was demoted. Ordering is observable
+# only in the un-collapsed case, and there it is untouched (see the no-reorder test).
+GATED_COLLAPSE_THRESHOLD = int(os.environ.get("WAYPOINTS_GATED_COLLAPSE_THRESHOLD")
+                                or COMPACT_THRESHOLD)
+
+# How many open items the banner LISTS before summarising the rest as a count.
+#
+# The banner is injected into EVERY session's context, so its cost is paid on every single
+# session — unlike a `list` the user chose to run. Past a couple of dozen open items the banner
+# stops being a reminder and becomes a wall of text that crowds out the actual conversation.
+# Ranking is by priority (surfaceable() sorts descending), so the head of the list is the part
+# worth spending context on; the tail is disclosed as a count, never silently dropped, and one
+# `waypoints.py list` shows it in full.
+BANNER_MAX_ITEMS = int(os.environ.get("WAYPOINTS_BANNER_MAX_ITEMS") or 10)
+
+# Titles longer than this are trimmed to one line in the banner. Titles accreted continuity notes
+# ("★ NEXT UP: … — prefix-cache goal already met by …"), which wrap to three lines each and turn
+# ten items into thirty. The full title stays one `show <id>` away, and the trim is word-boundary
+# with an ellipsis so it always reads as truncated rather than as a shorter title.
+BANNER_TITLE_MAX = int(os.environ.get("WAYPOINTS_BANNER_TITLE_MAX") or 96)
+
+# The command that walks the user through unblocking gated items. It ships in a SEPARATE plugin
+# (run-to-completion), so the banner must not promise it unconditionally — see plugin_available.
+UNGATE_COMMAND = "/ungate-queue"
+UNGATE_PLUGIN = "run-to-completion"
+
+
+def claude_dir():
+    """Claude Code's config root. Overridable via $WAYPOINTS_CLAUDE_DIR so tests can point the
+    plugin probe at a fixture instead of the real machine."""
+    return os.environ.get("WAYPOINTS_CLAUDE_DIR") or os.path.expanduser("~/.claude")
+
+
+def plugin_available(name, root=None):
+    """True when a SIBLING plugin is both installed and not explicitly disabled.
+
+    A soft dependency. `waypoints` must stand alone: pointing at another plugin's command when it
+    isn't there is a dangling reference for anyone who installed only this one. So the hint is
+    earned by a positive check, never assumed.
+
+    Two surfaces, because installed and enabled are different states: the registry
+    (`plugins/installed_plugins.json`, keyed `name@marketplace`) says it is on disk;
+    `enabledPlugins` in settings says whether it is switched on, and a user can disable a plugin
+    without uninstalling it. settings.local.json wins over settings.json, matching Claude Code's
+    own precedence.
+
+    Fails CLOSED — any unreadable/missing/malformed file means "don't advertise it". A missing
+    hint is a cosmetic loss; a hint for a command that does not exist is a broken instruction.
+    """
+    root = root or claude_dir()
+    try:
+        with open(os.path.join(root, "plugins", "installed_plugins.json")) as f:
+            registry = json.load(f)
+        keys = [k for k in (registry.get("plugins") or {})
+                if k == name or k.startswith(name + "@")]
+        if not keys:
+            return False
+    except Exception:
+        return False
+    # Explicit disable wins, and local settings win over global.
+    for settings_file in ("settings.json", "settings.local.json"):
+        try:
+            with open(os.path.join(root, settings_file)) as f:
+                enabled = (json.load(f).get("enabledPlugins") or {})
+        except Exception:
+            continue
+        for k in keys:
+            if k in enabled:
+                if not enabled[k]:
+                    return False
+                break
+    return True
+
+
+def _short_title(title, maxlen=None):
+    """Trim a title to one banner line on a word boundary. Returns it unchanged when it fits."""
+    maxlen = BANNER_TITLE_MAX if maxlen is None else maxlen
+    t = " ".join((title or "").split())
+    if len(t) <= maxlen:
+        return t
+    cut = t[:maxlen].rsplit(" ", 1)[0].rstrip(" ,;:—-")
+    return (cut or t[:maxlen].rstrip()) + "…"
+
+# Wrap width for banner lines. Overridable ($WAYPOINTS_BANNER_WIDTH) for tests.
+#
+# Why 72 (not the terminal's real width, and not the old 100): the hook's output is NOT printed
+# straight to the invoking tty. It's emitted as a JSON `systemMessage`/`additionalContext` string
+# that Claude Code relays through its OWN message renderer, which reflows text at the user's LIVE
+# pane width. So we wrap TWICE: once here (adding the hanging indent), then again by Claude Code's
+# renderer if any line we emit is wider than the pane. That second wrap knows nothing about our
+# indent spaces — it just breaks the raw stream at the pane edge, landing mid-indent/mid-word.
+# That double-wrap is what made continuation lines ragged "only at some window widths."
+#
+# The real render width is UNKNOWABLE at hook-run time (shutil.get_terminal_size()/$COLUMNS
+# reflect the hook subprocess's own stdio, not the chat pane), so we can't measure it. Instead we
+# pick a width comfortably under the common 80-column terminal minimum: at 72 our pre-wrapped
+# lines fit inside an 80-col pane with ~8 cols of slack, so the renderer never re-wraps them and
+# the double-wrap simply stops happening in practice. The slack also absorbs the one wide glyph
+# in the banner (🧭 is East-Asian-Wide = 2 display cols but textwrap counts it as 1); it sits only
+# in the header, never inside a wrapped/indented continuation segment, so a 1-col miscount there
+# is harmless within the slack.
+BANNER_WIDTH = int(os.environ.get("WAYPOINTS_BANNER_WIDTH") or 72)
+
+
+def _wrap(text, indent):
+    """Wrap `text` at BANNER_WIDTH with continuation lines hanging-indented to align under the
+    first line's text (not its bullet marker). We wrap ourselves — Claude Code's message renderer
+    (which shows this banner) has no knowledge of our indent, and keeping every emitted line under
+    a conservative width stops that renderer from re-wrapping (and thus mangling) our lines."""
+    # break_on_hyphens=False / break_long_words=False: this banner is full of hyphenated tokens
+    # that MUST survive intact -- kebab-case item ids, `/slash-commands`, `--long-flags`. Default
+    # textwrap happily splits `/waypoints-gated` into `/waypoints-` + `gated`, which the user then
+    # cannot copy or run, and turns an id into two unrecognizable halves. Preferring a slightly
+    # over-long line to a broken token is the right trade for output whose job is to be actioned.
+    return textwrap.fill(text, width=BANNER_WIDTH, initial_indent=indent,
+                          subsequent_indent=" " * len(indent),
+                          break_on_hyphens=False, break_long_words=False)
+
+
+def format_banner(items, ungate_hint=None, all_items=None, archived=()):
+    # `items` is what to SHOW (already filtered to surfaceable/open by the caller); `all_items` is
+    # the universe used to RESOLVE a waiting target. They must be separate: a target that has
+    # landed is by definition done, so it is absent from the display list, and resolving against
+    # the display list would report every landed target as nonexistent -- turning the one case
+    # the reader most needs to see into a false "no such target".
+    """Banner text for the given (already-surfaceable) items, or '' if none.
+
+    ids are intentionally NOT printed here — they read as a redundant restatement of the title
+    right next to them; use `waypoints.py list`/`show <id>` to get an item's id when needed.
+    Past COMPACT_THRESHOLD open items, sub-bullets are dropped (title only) and long titles are
+    trimmed to one line, to keep the banner skimmable; full detail stays one
+    `waypoints.py show <id>` away.
+
+    At most BANNER_MAX_ITEMS items are LISTED — the highest-priority head, since surfaceable()
+    has already sorted by priority. The remainder is disclosed as a count rather than listed,
+    because this text is injected into every session's context and an unbounded banner crowds
+    out the conversation it is meant to serve. Nothing is silently dropped: the header counts all
+    open items, the tail is counted explicitly, and `list` shows everything.
+
+    Gated items are marked ⛔ in place. Past GATED_COLLAPSE_THRESHOLD of them they collapse to a
+    single counted line instead — the count is always stated, so nothing is silently dropped.
+    That line offers UNGATE_COMMAND only when its plugin is actually installed and enabled
+    (`ungate_hint=None` probes; pass a bool to decide it yourself) — a soft dependency, so this
+    plugin never advertises a command a given machine does not have."""
+    if not items:
         return ""
-    lines = [
-        f"🧭 waypoints: {len(open_items)} open waypoint(s) still ahead — they persist until done. Just ask me to add or complete one:",
-    ]
-    for it in open_items:
-        created = it.get("created", "")
-        since_str = f" (since {created})" if created else ""
-        lines.append(f"  • {it.get('title')}{since_str}")
-        for s in it.get("summary", []):
-            lines.append(f"      - {s}")
+    # None = probe the machine; a bool = caller decided (tests, and any future caller that
+    # already knows). Probing only when gated items will actually collapse keeps the common
+    # path free of file reads.
+    gated = [i for i in items if is_gated(i) and not is_pinned(i)]
+    collapse_gated = len(gated) > GATED_COLLAPSE_THRESHOLD
+    # A PINNED item is never collapsed away: the pin is an explicit user override of the
+    # ordering, so the one thing the banner must not do is hide it in a count.
+    listable = ([i for i in items if is_pinned(i) or not is_gated(i)] if collapse_gated
+                else items)
+    # Cap the list at the highest-priority head; the tail becomes a count, not a silence.
+    shown = listable[:BANNER_MAX_ITEMS]
+    unlisted = len(listable) - len(shown)
+    compact = len(shown) > COMPACT_THRESHOLD
+    header = (f"🧭 waypoints: {len(items)} open waypoint(s) still ahead — they persist until "
+               f"done. Just ask me to add or complete one; disable via /plugin if unwanted:")
+    lines = [_wrap(header, "")]
+    if compact:
+        note = "(compact mode — run `waypoints.py show <id>` for an item's sub-bullets"
+        note += "; titles are trimmed)" if any(
+            len(" ".join(i["title"].split())) > BANNER_TITLE_MAX for i in shown) else ")"
+        lines.append(_wrap(note, "  "))
+    pinned_indent = "  📌 "
+    bullet_indent = "  • "
+    gated_indent = "  ⛔ "
+    waiting_indent = "  ⏳ "
+    date_indent = " " * len(bullet_indent)
+    for i in shown:
+        title = _short_title(i["title"]) if compact else i["title"]
+        indent = (pinned_indent if is_pinned(i)
+                  else gated_indent if is_gated(i)
+                  else waiting_indent if is_waiting(i) else bullet_indent)
+        lines.append(_wrap(title, indent))
+        # A waiting item's TARGET is shown even in compact mode. Without it the banner says an
+        # item is parked but not on what, which is the state that made these untraversable in
+        # prose -- and it is one short line, unlike a gate reason.
+        if is_waiting(i) and i.get("waiting_on"):
+            lines.append(_wrap(f"← {waiting_on_str(i)}", date_indent))
+        # The pin REASON shows even in compact mode. A pin overrules the honest tier order, so a
+        # reader who cannot see why it outranks everything cannot judge whether it still should.
+        if is_pinned(i):
+            tier_note = f" (tier: {i['tier']})" if i.get("tier") else ""
+            lines.append(_wrap(f"📌 PINNED — do this before the do-now pile{tier_note}: "
+                               f"{i.get('pin_reason') or 'no reason recorded'}", date_indent))
+        # The date always gets its own line, hanging-indented under the title, so its
+        # placement/indentation is fixed regardless of title length or pane width --
+        # unlike appending it to the title line, this needs no wrap heuristics.
+        if i.get("created"):
+            lines.append(_wrap(f"(since {i['created']})", date_indent))
+        if not compact:
+            for point in i.get("summary") or []:
+                lines.append(_wrap(point, "      - "))
+            if is_gated(i) and i.get("gate_reason"):
+                lines.append(_wrap(f"gated: {i['gate_reason']}", "      - "))
+    if unlisted:
+        lines.append(_wrap(f"… and {unlisted} more open, not listed here (lower priority). "
+                            f"`waypoints.py list` shows every one.", "  "))
+    if collapse_gated:
+        if ungate_hint is None:
+            ungate_hint = plugin_available(UNGATE_PLUGIN)
+        gated_line = (f"⛔ {len(gated)} gated — each needs something before it can move. "
+                      f"Run `/waypoints-gated` to see them and why")
+        gated_line += (f", or `{UNGATE_COMMAND}` to work through what is blocking them."
+                       if ungate_hint else ".")
+        lines.append(_wrap(gated_line, "  "))
+    # Waiting is counted separately from gated on purpose: gated needs the READER to do
+    # something, waiting needs nobody. Collapsing them would tell the reader they owe 15 answers
+    # they do not owe.
+    waiting = [i for i in items if is_waiting(i)]
+    if waiting:
+        universe = all_items if all_items is not None else items
+        landed = sum(1 for i in waiting
+                     if waiting_status(i, universe, archived)[0] == WAITING_LANDED)
+        wl = (f"⏳ {len(waiting)} waiting on another item — nothing for you to do; each "
+              f"releases itself. `waypoints.py list --waiting` shows what each is waiting for")
+        wl += (f". ⚠️ {landed} of them can move NOW (target already landed) — "
+               f"`waypoints.py resolve` releases them." if landed else ".")
+        lines.append(_wrap(wl, "  "))
     return "\n".join(lines)

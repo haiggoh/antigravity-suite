@@ -1,0 +1,11 @@
+{
+  "name": "agy-transcript-distiller",
+  "version": "0.1.0",
+  "description": "Distills Antigravity raw event JSONL transcripts into clean, line-addressable markdown capsules",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "category": "tools",
+  "skills": [
+    "skills/transcript-distiller"
+  ]
+}

@@ -564,6 +564,33 @@ def get_tip(force_rotate=False) -> str:
     return new_tip
 
 
+def load_waypoints_summary() -> str:
+    """Read ~/.gemini/waypoints.json or ~/.claude/waypoints.json and summarize open/pinned items."""
+    path = os.environ.get("WAYPOINTS_FILE") or os.path.expanduser("~/.gemini/waypoints.json")
+    if not os.path.isfile(path):
+        alt = os.path.expanduser("~/.claude/waypoints.json")
+        if os.path.isfile(alt):
+            path = alt
+        else:
+            return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        items = data.get("items", [])
+        open_items = [i for i in items if not i.get("done")]
+        if not open_items:
+            return ""
+        pinned = [i for i in open_items if i.get("pinned")]
+        if pinned:
+            top_title = pinned[0].get("title", "").replace("\n", " ").strip()
+            if len(top_title) > 36:
+                top_title = top_title[:35] + "…"
+            return f"🧭 {len(open_items)} open (📌 {top_title})"
+        return f"🧭 {len(open_items)} open"
+    except Exception:
+        return ""
+
+
 # ── Rendering ──────────────────────────────────────────────────────────────────
 SEP = f" {GRAY}│{RESET} "
 
@@ -628,9 +655,13 @@ def render(data: dict) -> str:
     sandbox_enabled = data.get("sandbox", {}).get("enabled", False)
     sandbox_str = f" {ORANGE}[sandbox]{RESET}" if sandbox_enabled else ""
 
-    # 8. Tip (stable for ≥ 3 s)
+    # 8. Tip & Waypoints
     tip         = get_tip()
-    tip_display = f"{BLUE}💡 {tip}{RESET}"
+    wp_summary  = load_waypoints_summary()
+    if wp_summary:
+        tip_display = f"{BLUE}💡 {tip}{RESET}  {GRAY}│{RESET}  {MAGENTA}{wp_summary}{RESET}"
+    else:
+        tip_display = f"{BLUE}💡 {tip}{RESET}"
 
     # ── Assemble rows ──────────────────────────────────────────────────────────
     row1 = (
