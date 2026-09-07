@@ -564,8 +564,8 @@ def get_tip(force_rotate=False) -> str:
     return new_tip
 
 
-def load_waypoints_summary() -> str:
-    """Read ~/.gemini/waypoints.json or ~/.claude/waypoints.json and summarize open/pinned items."""
+def load_waypoints_row() -> str:
+    """Read waypoints store and format a dedicated, rich 3rd statusline row."""
     path = os.environ.get("WAYPOINTS_FILE") or os.path.expanduser("~/.gemini/waypoints.json")
     if not os.path.isfile(path):
         alt = os.path.expanduser("~/.claude/waypoints.json")
@@ -580,13 +580,65 @@ def load_waypoints_summary() -> str:
         open_items = [i for i in items if not i.get("done")]
         if not open_items:
             return ""
+
+        total_open = len(open_items)
         pinned = [i for i in open_items if i.get("pinned")]
+        actionable = [i for i in open_items if i.get("state") == "actionable" and not i.get("pinned")]
+        waiting = [i for i in open_items if (i.get("state") == "waiting" or i.get("waiting_on")) and not i.get("pinned")]
+        gated = [i for i in open_items if (i.get("state") == "gated" or i.get("gate_reason")) and not i.get("pinned")]
+        untriaged = [i for i in open_items if not i.get("pinned") and i not in actionable and i not in waiting and i not in gated]
+
+        # Determine focus item
         if pinned:
-            top_title = pinned[0].get("title", "").replace("\n", " ").strip()
-            if len(top_title) > 36:
-                top_title = top_title[:35] + "…"
-            return f"🧭 {len(open_items)} open (📌 {top_title})"
-        return f"🧭 {len(open_items)} open"
+            focus = pinned[0]
+            slug = focus.get("id") or focus.get("slug") or "item"
+            title = focus.get("title", "").replace("\n", " ").strip()
+            reason = focus.get("pin_reason") or focus.get("because") or ""
+            reason_str = f" — {reason}" if reason else ""
+            focus_str = f"{YELLOW}📌 [{slug}] {title}{reason_str}{RESET}"
+        elif actionable:
+            focus = actionable[0]
+            slug = focus.get("id") or focus.get("slug") or "item"
+            title = focus.get("title", "").replace("\n", " ").strip()
+            focus_str = f"{GREEN}▶ [{slug}] {title}{RESET}"
+        elif waiting:
+            focus = waiting[0]
+            slug = focus.get("id") or focus.get("slug") or "item"
+            title = focus.get("title", "").replace("\n", " ").strip()
+            w_on = focus.get("waiting_on")
+            w_str = f" (waiting on {', '.join(w_on) if isinstance(w_on, list) else w_on})" if w_on else ""
+            focus_str = f"{LIGHT_ORANGE}⏳ [{slug}] {title}{w_str}{RESET}"
+        elif gated:
+            focus = gated[0]
+            slug = focus.get("id") or focus.get("slug") or "item"
+            title = focus.get("title", "").replace("\n", " ").strip()
+            g_reason = focus.get("gate_reason") or ""
+            g_str = f" (gated: {g_reason})" if g_reason else " (gated)"
+            focus_str = f"{MAGENTA}🔒 [{slug}] {title}{g_str}{RESET}"
+        else:
+            focus = open_items[0]
+            slug = focus.get("id") or focus.get("slug") or "item"
+            title = focus.get("title", "").replace("\n", " ").strip()
+            focus_str = f"{CYAN}▶ [{slug}] {title}{RESET}"
+
+        # Breakdown summary
+        breakdown_parts = []
+        if pinned:
+            breakdown_parts.append(f"{len(pinned)} pinned")
+        if actionable:
+            breakdown_parts.append(f"{len(actionable)} actionable")
+        if waiting:
+            breakdown_parts.append(f"{len(waiting)} waiting")
+        if gated:
+            breakdown_parts.append(f"{len(gated)} gated")
+        if untriaged:
+            breakdown_parts.append(f"{len(untriaged)} untriaged")
+
+        breakdown_str = " · ".join(breakdown_parts) if breakdown_parts else f"{total_open} open"
+        more_count = total_open - 1
+        more_str = f" {GRAY}(+{more_count} more){RESET}" if more_count > 0 else ""
+
+        return f"  {MAGENTA}{BOLD}🧭 Waypoints{RESET} {GRAY}({breakdown_str}):{RESET} {focus_str}{more_str}"
     except Exception:
         return ""
 
@@ -655,13 +707,9 @@ def render(data: dict) -> str:
     sandbox_enabled = data.get("sandbox", {}).get("enabled", False)
     sandbox_str = f" {ORANGE}[sandbox]{RESET}" if sandbox_enabled else ""
 
-    # 8. Tip & Waypoints
+    # 8. Tip (Row 2)
     tip         = get_tip()
-    wp_summary  = load_waypoints_summary()
-    if wp_summary:
-        tip_display = f"{BLUE}💡 {tip}{RESET}  {GRAY}│{RESET}  {MAGENTA}{wp_summary}{RESET}"
-    else:
-        tip_display = f"{BLUE}💡 {tip}{RESET}"
+    tip_display = f"{BLUE}💡 {tip}{RESET}"
 
     # ── Assemble rows ──────────────────────────────────────────────────────────
     row1 = (
@@ -673,6 +721,11 @@ def render(data: dict) -> str:
         f"{tokens_display}"
     )
     row2 = f"  {tip_display}"
+
+    # 9. Waypoints (Row 3)
+    wp_row = load_waypoints_row()
+    if wp_row:
+        return f"{row1}\n{row2}\n{wp_row}"
 
     return f"{row1}\n{row2}"
 
