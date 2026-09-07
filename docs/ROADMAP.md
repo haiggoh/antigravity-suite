@@ -57,7 +57,7 @@ This roadmap defines the architectural alignment, version tracking, and implemen
 
 ### Phase 3: Advanced Tooling, Distillation & Desktop Bridge
 - [ ] **`agy-transcript-distiller` (v0.8.0 Port)**: Line-addressable markdown capsule generator and CLI.
-- [ ] **`agy-cost-tracker` (v0.4.0 Port)**: Token cost projector and gateway calibrator.
+- [x] **`agy-cost-tracker` (v0.4.0 Port)**: Token cost projector, daily gateway spend telemetry, and refusal cap calibration.
 - [ ] **`agy-desktop-sync` (v1.0.2 Port)**: Bidirectional MCP and settings synchronization between CLI and IDE.
 - [ ] **`agy-compact-session` (v0.1.0 Port)**: Session history compaction.
 - [ ] **`agy-no-hidden-changes` (v1.4.3 Tooling)**: Hermetic validation harness and shadow file guards.
