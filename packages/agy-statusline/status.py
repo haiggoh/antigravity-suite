@@ -564,88 +564,36 @@ def get_tip(force_rotate=False) -> str:
     return new_tip
 
 
-def format_waypoint_line(item: dict) -> str:
-    slug = item.get("id") or item.get("slug") or "item"
-    title = item.get("title", "").replace("\n", " ").strip()
-    pinned = item.get("pinned", False)
-    tier = item.get("tier", "")
-    state = item.get("state", "")
-    waiting_on = item.get("waiting_on")
-    gate_reason = item.get("gate_reason")
-
-    if pinned:
-        reason = item.get("pin_reason") or item.get("because") or ""
-        reason_str = f" — {reason}" if reason else ""
-        return f"{YELLOW}📌 [{slug}] {title}{reason_str}{RESET}"
-    elif tier == "waiting" or state == "waiting" or waiting_on:
-        w_str = f" (waiting on {', '.join(waiting_on) if isinstance(waiting_on, list) else waiting_on})" if waiting_on else ""
-        return f"{LIGHT_ORANGE}⏳ [{slug}] {title}{w_str}{RESET}"
-    elif tier == "gated" or state == "gated" or gate_reason:
-        g_str = f" (gated: {gate_reason})" if gate_reason else " (gated)"
-        return f"{MAGENTA}🔒 [{slug}] {title}{g_str}{RESET}"
-    elif tier in ("do-now", "heavy") or state == "actionable":
-        tier_badge = f" {GRAY}({tier}){RESET}" if tier else ""
-        return f"{GREEN}▶ [{slug}] {title}{tier_badge}{RESET}"
-    else:
-        return f"{CYAN}▶ [{slug}] {title}{RESET}"
-
-
-def load_waypoints_multiline() -> List[str]:
-    """Read waypoints store and return list of formatted statusline lines (header + top 3 items)."""
+def load_waypoints_summary() -> str:
+    """Read ~/.gemini/waypoints.json or ~/.claude/waypoints.json and summarize open items simply."""
     path = os.environ.get("WAYPOINTS_FILE") or os.path.expanduser("~/.gemini/waypoints.json")
     if not os.path.isfile(path):
         alt = os.path.expanduser("~/.claude/waypoints.json")
         if os.path.isfile(alt):
             path = alt
         else:
-            return []
+            return ""
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         items = data.get("items", [])
         open_items = [i for i in items if not i.get("done")]
         if not open_items:
-            return []
+            return ""
 
-        total_open = len(open_items)
         pinned = [i for i in open_items if i.get("pinned")]
-        waiting = [i for i in open_items if (i.get("tier") == "waiting" or i.get("state") == "waiting" or i.get("waiting_on")) and not i.get("pinned")]
-        gated = [i for i in open_items if (i.get("tier") == "gated" or i.get("state") == "gated" or i.get("gate_reason")) and not i.get("pinned")]
-        actionable_do_now = [i for i in open_items if i.get("tier") == "do-now" and not i.get("pinned") and i not in waiting and i not in gated]
-        actionable_heavy = [i for i in open_items if (i.get("tier") == "heavy" or i.get("state") == "actionable") and not i.get("pinned") and i not in waiting and i not in gated and i not in actionable_do_now]
-        untriaged = [i for i in open_items if not i.get("pinned") and i not in actionable_do_now and i not in actionable_heavy and i not in waiting and i not in gated]
+        do_now = [i for i in open_items if i.get("tier") == "do-now" and not i.get("pinned")]
+        top = pinned[0] if pinned else (do_now[0] if do_now else open_items[0])
+        title = top.get("title", "").replace("\n", " ").strip()
+        if len(title) > 38:
+            title = title[:37].rstrip() + "…"
 
-        # Breakdown summary
-        breakdown_parts = []
+        total = len(open_items)
         if pinned:
-            breakdown_parts.append(f"{len(pinned)} pinned")
-        actionable_count = len(actionable_do_now) + len(actionable_heavy)
-        if actionable_count:
-            breakdown_parts.append(f"{actionable_count} actionable")
-        if waiting:
-            breakdown_parts.append(f"{len(waiting)} waiting")
-        if gated:
-            breakdown_parts.append(f"{len(gated)} gated")
-        if untriaged:
-            breakdown_parts.append(f"{len(untriaged)} untriaged")
-
-        breakdown_str = " · ".join(breakdown_parts) if breakdown_parts else f"{total_open} open"
-
-        # Prioritized list of top 3 items
-        ordered_items = pinned + actionable_do_now + actionable_heavy + waiting + gated + untriaged
-        top_3 = ordered_items[:3]
-        remaining_count = total_open - len(top_3)
-
-        lines = [f"  {MAGENTA}{BOLD}🧭 Waypoints{RESET} {GRAY}({breakdown_str}):{RESET}"]
-        for item in top_3:
-            lines.append(f"    {format_waypoint_line(item)}")
-
-        if remaining_count > 0:
-            lines.append(f"    {GRAY}(+{remaining_count} more · run 'waypoints' to manage){RESET}")
-
-        return lines
+            return f"🧭 {total} open (📌 {title})"
+        return f"🧭 {total} open ({title})"
     except Exception:
-        return []
+        return ""
 
 
 # ── Rendering ──────────────────────────────────────────────────────────────────
@@ -712,9 +660,13 @@ def render(data: dict) -> str:
     sandbox_enabled = data.get("sandbox", {}).get("enabled", False)
     sandbox_str = f" {ORANGE}[sandbox]{RESET}" if sandbox_enabled else ""
 
-    # 8. Tip (Row 2)
+    # 8. Tip & Waypoints (Row 2)
     tip         = get_tip()
-    tip_display = f"{BLUE}💡 {tip}{RESET}"
+    wp_summary  = load_waypoints_summary()
+    if wp_summary:
+        tip_display = f"{BLUE}💡 {tip}{RESET}  {GRAY}│{RESET}  {GRAY}{wp_summary}{RESET}"
+    else:
+        tip_display = f"{BLUE}💡 {tip}{RESET}"
 
     # ── Assemble rows ──────────────────────────────────────────────────────────
     row1 = (
@@ -727,12 +679,7 @@ def render(data: dict) -> str:
     )
     row2 = f"  {tip_display}"
 
-    rows = [row1, row2]
-    wp_lines = load_waypoints_multiline()
-    if wp_lines:
-        rows.extend(wp_lines)
-
-    return "\n".join(rows)
+    return f"{row1}\n{row2}"
 
 
 # ── Stdin Reader Thread ────────────────────────────────────────────────────────
