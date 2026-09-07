@@ -583,9 +583,9 @@ def load_waypoints_row() -> str:
 
         total_open = len(open_items)
         pinned = [i for i in open_items if i.get("pinned")]
-        actionable = [i for i in open_items if i.get("state") == "actionable" and not i.get("pinned")]
-        waiting = [i for i in open_items if (i.get("state") == "waiting" or i.get("waiting_on")) and not i.get("pinned")]
-        gated = [i for i in open_items if (i.get("state") == "gated" or i.get("gate_reason")) and not i.get("pinned")]
+        waiting = [i for i in open_items if (i.get("tier") == "waiting" or i.get("state") == "waiting" or i.get("waiting_on")) and not i.get("pinned")]
+        gated = [i for i in open_items if (i.get("tier") == "gated" or i.get("state") == "gated" or i.get("gate_reason")) and not i.get("pinned")]
+        actionable = [i for i in open_items if (i.get("tier") in ("do-now", "heavy") or i.get("state") == "actionable") and not i.get("pinned") and i not in waiting and i not in gated]
         untriaged = [i for i in open_items if not i.get("pinned") and i not in actionable and i not in waiting and i not in gated]
 
         # Determine focus item
