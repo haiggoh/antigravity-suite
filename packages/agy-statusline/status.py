@@ -138,6 +138,86 @@ def format_reset_time(reset_time: str) -> str:
     return f"{hours}h {mins}m" if mins else f"{hours}h"
 
 
+def format_reset_seconds(diff: int) -> str:
+    if diff <= 0:
+        return "now"
+    minutes = (diff + 59) // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, mins = divmod(minutes, 60)
+    if hours >= 24:
+        days, rem_hours = divmod(hours, 24)
+        return f"{days}d {rem_hours}h" if rem_hours else f"{days}d"
+    return f"{hours}h {mins}m" if mins else f"{hours}h"
+
+
+def extract_native_quota(model_name: str, quota_data: dict) -> dict:
+    if not quota_data or not isinstance(quota_data, dict):
+        return {}
+
+    m_lower = (model_name or "").lower()
+    selected_key = None
+    selected = None
+
+    # 1. Direct pool matching based on model family
+    if "gemini" in m_lower:
+        for k in ("gemini-weekly", "gemini", "gemini_weekly"):
+            if k in quota_data:
+                selected_key, selected = k, quota_data[k]
+                break
+    elif any(b in m_lower for b in ("claude", "gpt", "anthropic", "openai", "3p")):
+        for k in ("3p-weekly", "3p", "3p_weekly"):
+            if k in quota_data:
+                selected_key, selected = k, quota_data[k]
+                break
+
+    # 2. Substring matching across pool keys
+    if not selected:
+        for k, v in quota_data.items():
+            k_lower = k.lower()
+            if "gemini" in m_lower and "gemini" in k_lower:
+                selected_key, selected = k, v
+                break
+            if ("claude" in m_lower or "gpt" in m_lower or "3p" in m_lower) and "3p" in k_lower:
+                selected_key, selected = k, v
+                break
+
+    # 3. Fallback to first available pool
+    if not selected:
+        for k, v in quota_data.items():
+            if isinstance(v, dict) and ("remaining_fraction" in v or "remaining_percentage" in v):
+                selected_key, selected = k, v
+                break
+
+    if not selected or not isinstance(selected, dict):
+        return {}
+
+    if "remaining_fraction" in selected:
+        rem_pct = max(0.0, min(100.0, float(selected["remaining_fraction"]) * 100))
+    elif "remaining_percentage" in selected:
+        rem_pct = max(0.0, min(100.0, float(selected["remaining_percentage"])))
+    else:
+        return {}
+
+    res = {
+        "name": selected_key or model_name,
+        "remaining_percentage": rem_pct,
+        "source": "native_agy_quota",
+    }
+
+    diff = selected.get("reset_in_seconds")
+    if diff is not None:
+        try:
+            res["refreshes_in"] = format_reset_seconds(int(diff))
+        except Exception:
+            pass
+    elif selected.get("reset_time"):
+        res["reset_time"] = selected["reset_time"]
+        res["refreshes_in"] = format_reset_time(selected["reset_time"])
+
+    return res
+
+
 def extract_arg(command_line: str, name: str) -> str:
     match = re.search(rf"{re.escape(name)}(?:=|\s+)([^\s\"']+|\"[^\"]+\"|'[^']+')", command_line)
     if not match:
@@ -498,6 +578,34 @@ def refresh_quota_if_needed(data: dict) -> dict:
 
 
 def load_quota_for_model(model_name: str, data: dict) -> dict:
+    # 1. Native live quota directly supplied by agy in the statusline payload
+    native_quota = data.get("quota")
+    if isinstance(native_quota, dict) and native_quota:
+        extracted = extract_native_quota(model_name, native_quota)
+        if extracted:
+            try:
+                models_dict = {}
+                for k, v in native_quota.items():
+                    if isinstance(v, dict):
+                        pct = max(0.0, min(100.0, float(v.get("remaining_fraction", 0.0)) * 100)) if "remaining_fraction" in v else float(v.get("remaining_percentage", 0.0))
+                        ref_in = format_reset_seconds(int(v["reset_in_seconds"])) if v.get("reset_in_seconds") is not None else format_reset_time(v.get("reset_time", ""))
+                        models_dict[normalize_model_name(k)] = {
+                            "name": k,
+                            "remaining_percentage": pct,
+                            "reset_time": v.get("reset_time", ""),
+                            "refreshes_in": ref_in,
+                            "source": "native_agy_quota",
+                        }
+                write_quota_cache({
+                    "timestamp": time.time(),
+                    "source": "native_agy_quota",
+                    "scope": quota_scope(data),
+                    "models": models_dict,
+                })
+            except Exception:
+                pass
+            return extracted
+
     cache = refresh_quota_if_needed(data)
     if not cache:
         return {}

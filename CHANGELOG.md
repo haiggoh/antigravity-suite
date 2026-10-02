@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.5.0] - 2026-10-02
+
+### 🚀 Milestone Release: Feature Parity Expansion & Package Alignment
+
+#### `agy-free-agent` (v0.21.0)
+* Renamed `agy-local-delegate` to `agy-free-agent` to align with the core ecosystem.
+* Integrated NVIDIA NIM remote inference lane (`NVIDIA_API_KEY`).
+* Added `csl` standalone executable symlinked to `agy-csl`.
+
+#### `agy-check-code` (v0.1.0) — New Package
+* Integrated active post-tool-use linter governance (`ruff`, `shellcheck`, custom linters).
+* Added complete test suite (21 unit tests).
+
+#### `agy-summon-skills` (v0.1.1) — New Package
+* Integrated dynamic skill discovery engine to evaluate prompts and match relevant skills.
+* Added complete test suite (56 unit tests).
+
+#### `agy-lasting-plans` (v0.3.0) — New Package
+* Integrated archival plan protection engine preserving plans and playbooks in Git-versioned archives (`~/Claude-plans`, `~/Claude-playbooks`).
+* Added complete test suite (73 unit tests).
+
+---
+
 ## [v1.4.2] - 2026-09-01
 
 ### 🛡️ Cross-Client Local-Server Eviction Safety

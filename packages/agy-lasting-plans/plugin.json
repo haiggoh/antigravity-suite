@@ -1,0 +1,11 @@
+{
+  "name": "agy-lasting-plans",
+  "version": "0.3.0",
+  "description": "Archival plan protection engine that preserves plans and playbooks in Git-versioned archives (~/Claude-plans, ~/Claude-playbooks) with watcher and CLI.",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "category": "tools",
+  "skills": [
+    "skills/lasting-plans"
+  ]
+}

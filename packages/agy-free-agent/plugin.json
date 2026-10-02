@@ -1,0 +1,11 @@
+{
+  "name": "agy-free-agent",
+  "version": "0.21.0",
+  "description": "Free Inference Engine (Local MLX & NVIDIA Remote Lane) for Google Antigravity",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "category": "tools",
+  "skills": [
+    "skills/free-agent"
+  ]
+}

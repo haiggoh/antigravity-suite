@@ -8,7 +8,7 @@ import agy_audit_core as core
 
 
 def test_redact_secret_text():
-    sample = "Anthropic key: sk-ant-api03-1234567890abcdef1234567890abcdef and Google: AIzaSyD1234567890abcdef1234567890abcdef"  # noaudit
+    sample = "Anthropic key: sk-a...[REDACTED Anthropic API Key]...ef and Google: AIza...[REDACTED Google API Key]...ef"  # noaudit
     redacted, count = core.redact_secret_text(sample)
     assert count == 2
     assert "sk-ant-" not in redacted or "REDACTED" in redacted
@@ -27,7 +27,7 @@ def test_scan_workspace_records():
 
         # Create file with secret
         with open(os.path.join(tmpdir, "config.txt"), "w", encoding="utf-8") as f:
-            f.write("GH_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwxy\n")
+            f.write("GH_TOKEN=ghp_...[REDACTED GitHub Personal Access Token]...xy\n")
 
         report = core.scan_workspace_records(tmpdir)
         assert report["scanned_files_count"] == 3
@@ -45,7 +45,7 @@ def test_noaudit_suppresses_secret_scan():
         fixture = os.path.join(tmpdir, "intentional-secret.txt")
         with open(fixture, "w", encoding="utf-8") as handle:
             handle.write(
-                "Anthropic: sk-ant-api03-1234567890abcdef1234567890abcdef"
+                "Anthropic: sk-a...[REDACTED Anthropic API Key]...ef"
                 "  # noaudit\n"
             )
         assert core.scan_file_for_secrets(fixture) == []

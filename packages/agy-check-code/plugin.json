@@ -1,0 +1,11 @@
+{
+  "name": "agy-check-code",
+  "version": "0.1.0",
+  "description": "Lints the lines Antigravity just edited and feeds findings straight back so they get fixed in the same turn. Supports ruff, shellcheck, and custom linters.",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "category": "tools",
+  "skills": [
+    "skills/check-code"
+  ]
+}

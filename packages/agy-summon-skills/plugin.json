@@ -1,0 +1,11 @@
+{
+  "name": "agy-summon-skills",
+  "version": "0.1.1",
+  "description": "Dynamic skill discovery engine that evaluates prompt text and suggests the 1-3 most relevant installed skills for Google Antigravity.",
+  "author": "Heiko Brantsch",
+  "license": "MIT",
+  "category": "tools",
+  "skills": [
+    "skills/summon-skills"
+  ]
+}
