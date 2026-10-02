@@ -1,6 +1,6 @@
 {
   "name": "agy-waypoints",
-  "version": "0.8.0",
+  "version": "0.11.0",
   "description": "Surfaces open tasks and waypoints as a persistent startup banner and interactive command selector.",
   "author": "haiggoh",
   "license": "MIT",

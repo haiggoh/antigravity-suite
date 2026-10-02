@@ -1,8 +1,11 @@
 {
   "name": "agy-resume-interrupted",
-  "version": "0.4.0",
-  "description": "Interrupted Session Detector and Resumption Engine for Google Antigravity",
+  "version": "0.4.1",
+  "description": "Session crash & quota interruption scanner and interactive session resumption browser.",
   "author": "Heiko Brantsch",
   "license": "MIT",
-  "skills": ["skills/resume-interrupted"]
+  "category": "tools",
+  "skills": [
+    "skills/resume-interrupted"
+  ]
 }

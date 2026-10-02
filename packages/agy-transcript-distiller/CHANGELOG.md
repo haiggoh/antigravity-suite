@@ -1,0 +1,162 @@
+# Changelog
+
+## 0.8.3
+
+### Fixed — the 0.8.2 release could not actually deliver 0.8.2
+
+v0.8.2 was tagged before the release was built, and building it surfaced defects that made the
+release unable to ship its own headline feature. The tag is published and therefore left alone;
+these are the corrections.
+
+- **The release archive did not contain the skill this release is about.** `FILES` in
+  `scripts/build-release.py` was never extended, so a consumer installing 0.8.2 would have got the
+  CLI plus a changelog announcing a companion skill that was not there. The builder's test fixture
+  duplicated that file list rather than deriving it, so the fixture — not the builder — was what
+  broke when the list grew; it now parses `FILES` from the builder.
+- **`scripts/build-release.py --help` and the generated installer's `--help` both ignored the flag
+  and did the work.** The builder reported a bogus version mismatch; the installer went straight to
+  `curl` and printed a 404 that looked like the help itself had failed. Both now parse arguments
+  first and exit 2 on an unknown flag.
+- The installer's local-archive escape hatch was misspelled `CC_TRANSSCRIPT_ARCHIVE`. It is now
+  `CC_TRANSCRIPT_ARCHIVE`, documented in `--help`, with the old name still accepted.
+
+### Notes
+
+- README installer URLs now point at v0.8.3. They are deliberately bumped only once the matching
+  release exists — a documented install route that 404s is worse than a stale version number.
+
+## 0.8.2
+
+### Added — a cc-transcript companion skill
+
+- `skills/cc-transcript/` — a skill that invokes the *installed* CLI rather than bundling a copy of
+  it, so it cannot drift from the version actually on the machine. It documents the two behaviours
+  that mislead people: the picker selects the LARGEST recent transcript rather than the newest, and
+  the final turn may not be flushed to disk yet, so a mid-session capsule can legitimately be
+  missing the last exchange.
+- The README's "Is this a Claude Code plugin?" answer is now Yes, with the skill described.
+
+### Fixed
+
+- The skill as first written documented an interface this CLI does not have: `--since`, `--id` and
+  `--format capsule|compact|both` are not flags it accepts, `pipx install` / `pip install -e .` are
+  not supported install routes (there is no packaging metadata — installation is Homebrew or the
+  release installer), and the artifact names and default output directory were both wrong
+  (`~/.claude/compacted-sessions`, `<base>.indexed_capsule.md`, `<base>.compact.jsonl.txt`). Every
+  invocation and filename in the skill is now verified against the real CLI end-to-end.
+- `VERSION` was left at 0.8.1 while the changelog already announced 0.8.2 — caught by this repo's
+  own `test_packaged_version_matches_the_latest_release_entry`, which is exactly its job.
+## 0.8.1
+
+Payload-mirror verification defect fix.
+
+- Run cross-record payload interning before same-record tool-result mirror
+  deduplication.
+- Prevent unresolved same-record mirror markers when a later record repeats a
+  large payload that was retained in an earlier compact record.
+- Add regression coverage for the interaction between cross-record references
+  and same-record tool-result mirrors.
+- Keep compact bundle format 3 unchanged.
+
+## 0.8.0
+
+Picker and continuation workflow improvements, plus release-integrity hardening.
+
+- Reject a requested release-builder version when it differs from the packaged CLI version.
+- Add traffic-light source/bundle status markers, including a prioritization-only `new tail to verify` marker.
+- Allow selection from the complete stable session list, including rows not currently displayed.
+- Support counted and repeated list expansion with `m`, `m5`, and repeated `m` forms.
+- Ignore terminal navigation escape sequences instead of parsing them as selections.
+- Default verified extensions to numbered continuations and clarify amendment and overlap behavior.
+- Treat declining another export after a successful batch as a normal zero-status exit.
+- Keep compact bundle format 3 unchanged.
+
+## 0.7.0
+
+The project is now **Claude Code Transcript Distiller**. It is a standalone CLI, not a plugin or
+a skill, and "bundle" stopped describing what it produces once format 3 retired the two
+sidecar artifacts in favor of one compact evidence file plus one indexed handoff.
+
+- The entry script is renamed `compact_session_bundle.py` → `cc_transcript.py` (the installed
+  command stays `cc-transcript`, so nothing in everyday usage changes).
+- The GitHub repository moves `claude-code-session-bundle` → `claude-code-transcript-distiller`
+  (GitHub redirects both web and git from the old slug, so existing clones keep working, but
+  prefer the new URL).
+- Release assets are renamed in lockstep: `claude-code-transcript-distiller-0.7.0.tar.gz` and a
+  matching installer. The Homebrew tap formula moves with an `oldname` alias so existing
+  installs migrate instead of breaking.
+- **This is not a format break.** The `__generator__` header line now reads
+  `cc_transcript.py 0.7.0`, but existing-bundle classification only compares record bodies,
+  never the header — bundles produced by earlier releases still classify as
+  `identical`/`extension` after the rename.
+
+## 0.6.3
+
+Artifact ordering on disk. A run's artifacts all landed inside the same second, and a filesystem
+timestamp has no sub-second component that Finder sorts on — so a batch shared one modification
+time and "sort by date" produced an arbitrary order that no longer matched the sessions'
+chronology. Measured on a real export: the two artifacts of a single session were written 0.4 ms
+apart, i.e. indistinguishable to any date sort.
+
+- Process a batch **oldest source first**. The picker deliberately lists newest-first (the most
+  recent session at the top, where you want it), so the batch was previously exported in
+  reverse-chronological order. `source_chronology_key` sorts by source mtime — the same signal the
+  picker orders by, so "oldest first" means the same thing the user saw when choosing — and a
+  source whose mtime cannot be read sorts last instead of aborting the batch.
+- Stamp each artifact one second apart in write order (`stagger_artifact_times`), across the whole
+  batch rather than per session — two sessions exported in the same second would otherwise each be
+  internally ordered yet tie with each other. Times run backward from now, so the last artifact is
+  ~now and earlier ones are progressively older: nothing is stamped in the future, which would
+  confuse Finder, backup tools and staleness checks. A missing or unwritable file is skipped, since
+  cosmetic ordering must never fail an export whose real output already succeeded.
+- Add 7 regression tests (71 total), each mutation-tested: neutering the stagger fails two, and
+  removing main's ordering call fails the wiring check. The wiring check inspects the parsed AST
+  rather than the source text, because both fixes live in main()'s batch loop, which needs the
+  interactive picker to reach and so cannot be exercised directly by a unit test.
+
+## 0.6.2
+
+Defect fixes only; no naming or format-contract changes. All four issues were found by running
+0.6.1 against a real 7.85 MB / 2,554-record transcript and measuring its artifacts.
+
+- Range-encode `__hoisted_conflicts__` as `from_line`/`to_line`/`occurrences`/`value` spans instead of one entry per occurrence. On the measured session the header line drops from 94,190 to 4,806 bytes (the conflict ledger from 95,379 to 2,659; 1,760 pairs to 23 spans) with every occurrence still accounted for. Header-only, so existing-bundle classification is unaffected.
+- Rename the chronology column `JSONL Line` to `Compact Line`. It always held the compact line number, so a reader following the capsule's escalation instruction into the raw transcript landed on an unrelated record — a result at source line 48 was labelled 34.
+- Mark elided text in previews with `[…]`, and prefix a fragment that starts mid-sentence with an ellipsis. A preview may join the first line to the first signal-matching line, which is often not adjacent; joined silently, the result read as a continuous statement the source never contained. 73 previews in the measured session were affected.
+- Omit chronology rows carrying no information — plain assistant records whose only block is a zero-length thinking block. Rows with any evidence value are kept, including tool calls, tool results, and queued user instructions with empty previews. Rows containing the empty sentinel drop from 409 to 20 of the table.
+- Render a no-argument tool call as its bare name. `describe_call` returned the truthy `"[empty]"` sentinel, which defeated the caller's `if detail` test and produced rows reading `TaskList: [empty]`.
+- Remove a duplicated `__pycache__`/`*.py[cod]` stanza from `.gitignore`; correct the stale generator-version example in `docs/compact-format-3.md` and document the header, chronology, and preview rules above.
+- Fix the release builder producing artifacts named for a stale hardcoded version: it emitted a `0.6.1` archive from a `0.6.2` source. The default now reads `VERSION` from the packaged script, and its test asserts that relationship instead of pinning a literal — the test previously encoded `0.6.1` in its own name, which is why the builder's drift went unnoticed.
+- Add 18 regression tests (64 total). Each new assertion was mutation-tested against the pre-fix behaviour to confirm it detects the regression it guards.
+
+Note on existing bundles: because comparison is body-only and unchanged, re-running against a bundle produced by an earlier 0.6.x correctly reports `identical` and writes nothing. The smaller header and the corrected capsule therefore apply to newly created bundles; regenerate with `--overwrite` to adopt them for an existing one.
+
+## 0.6.1
+
+- Show the original transcript size alongside existing canonical compact JSONL and indexed-capsule sizes in the interactive picker.
+- Keep generated artifact sizes visually grouped as `[compact JSONL | indexed capsule]`, including explicit partial-pair markers.
+- Omit the repetitive project field for home-directory sessions and show only the latest CWD basename for actual projects.
+- Resolve and cache picker title and CWD metadata in one transcript scan.
+
+## 0.6.0
+
+- Make compact JSONL plus indexed capsule the exact canonical output pair; retire standalone index and capsule sidecars after verified migration.
+- Introduce compact format 3 with sparse header navigation and an expanded omission/transformation ledger.
+- Omit recognized base64 by default using structured metadata and decoded-byte SHA-256 identity; add `--keep-base64`.
+- Remove repeated `ai-title` and `last-prompt` metadata while retaining one resolved title in the header.
+- Add exact allowlisted large-payload references while preserving user text, visible assistant text, tool inputs, and unique results.
+- Collapse unchanged recognized mode/permission announcements while preserving initial values and transitions.
+- Preserve thinking by default and add `--omit-thinking`; preserve `file-history-delta` unchanged.
+- Redesign the indexed capsule around deterministic evidence IDs and capsule-first receiving-LLM instructions.
+- Add format-2 migration/extension projection, committed-output rollback, retired-sidecar handling, and `--keep-legacy-artifacts`.
+- Add focused public format-3, output, migration, rollback, and release-builder regression tests.
+
+## 0.5.0
+
+- Display Claude Code custom titles, AI-generated titles, summaries, or first-prompt fallbacks in the interactive picker.
+- Keep complete session UUIDs visible beneath human-readable labels.
+- Redact, normalize, truncate, and cache labels per invocation.
+- Merge open-file, environment-ID, and recent-activity signals.
+- Replace ambiguous “likely” wording with factual activity labels.
+- Add standard-library regression tests for title resolution.
+- Add visual spacing between picker entries and skip command-only placeholder prompts.
+- Hide title-source annotations and use `Untitled session` as the final fallback.

@@ -1,7 +1,7 @@
 {
   "name": "agy-transcript-distiller",
-  "version": "0.1.0",
-  "description": "Distills Antigravity raw event JSONL transcripts into clean, line-addressable markdown capsules",
+  "version": "0.8.3",
+  "description": "JSONL conversation transcript to Markdown capsule distiller with dual output (.compact.jsonl.txt + .indexed_capsule.md), v3 compaction engine, and thinking log preservation.",
   "author": "Heiko Brantsch",
   "license": "MIT",
   "category": "tools",

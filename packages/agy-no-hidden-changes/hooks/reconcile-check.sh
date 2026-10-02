@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# no-hidden-changes — SessionStart hook.
+#
+# Emits ONE JSON object on stdout, using the two disjoint hook channels:
+#   - hookSpecificOutput.additionalContext : MODEL-only. Always the standing
+#     nudge; on a first run it also carries the triage-first reconciliation
+#     prompt.
+#   - systemMessage (first run only) : USER-visible banner confirming the plugin
+#     is active and pre-announcing the one-time reconciliation.
+#
+# It only DETECTS + OFFERS — it never writes the marker. Claude writes the marker
+# (see the skill) only AFTER the pass completes or is dismissed, so an un-acted
+# pass simply re-offers next session and cannot be silently lost.
+#
+# Pure bash (3.2-compatible); no jq/python dependency at runtime.
+#
+# Cross-plugin ordering: this hook is meant to be the FIRST SessionStart banner to
+# land (resume-interrupted and waypoints sequence themselves after it — see their own
+# hooks). It never waits on anything itself; it just signals "done deciding" as soon as
+# it has emitted its output, via a session-scoped flag any other plugin's hook may poll:
+# `$TMPDIR-or-/tmp/claude-sessionstart-banners/<session_id>.no-hidden-changes.done`. This
+# is one-way and best-effort — a missing/unparseable session_id just means no flag is
+# written, which never blocks this hook's own output.
+
+set -uo pipefail
+
+# Read the hook's stdin JSON once, defensively, and with a BOUND.
+#
+# `-t 0` alone is not enough. It distinguishes a terminal from "not a terminal", but the
+# non-terminal case has two shapes: a pipe that will reach EOF (the real SessionStart
+# invocation) and a pipe or socket the CALLER HOLDS OPEN and never closes (an agent's
+# shell tool, a CI runner, a test harness). An unbounded `cat` returns for the first and
+# blocks forever on the second — and because this is a SessionStart hook, blocking here
+# does not merely slow something down, it stalls the start of the session.
+#
+# `read -t 1 -d ''` covers both: EOF ends the read immediately, so a real piped payload
+# costs nothing, while a never-closing caller costs at most one second. It returns
+# non-zero on timeout but still populates the variable with whatever arrived, which is
+# why the `|| true` is load-bearing rather than decorative. Integer timeout only: bash
+# 3.2 predates fractional `-t`.
+STDIN_JSON=""
+if [ ! -t 0 ]; then
+  IFS= read -r -t 1 -d '' STDIN_JSON 2>/dev/null || true
+fi
+SESSION_ID="$(printf '%s' "$STDIN_JSON" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+
+_banner_flag_dir() {
+  printf '%s' "${TMPDIR:-${XDG_RUNTIME_DIR:-/tmp}}/claude-sessionstart-banners"
+}
+
+# Best-effort, session-scoped "I'm done deciding" flag for any OTHER plugin's
+# SessionStart hook to optionally poll on. Never blocks; sid-less sessions get no flag
+# since nothing could key on them anyway. Always called via `trap ... EXIT` below so it
+# fires on every exit path, not just the success path.
+_signal_done() {
+  [ -n "$SESSION_ID" ] || return 0
+  local dir; dir="$(_banner_flag_dir)"
+  mkdir -p -m 700 "$dir" 2>/dev/null || return 0
+  local path="$dir/${SESSION_ID}.no-hidden-changes.done"
+  local tmp="${path}.tmp.$$"
+  printf 'producer=no-hidden-changes\n' > "$tmp" 2>/dev/null && mv -f "$tmp" "$path" 2>/dev/null
+}
+trap _signal_done EXIT
+
+# Triage epoch — the ONLY thing that gates re-arming the reconciliation.
+# Bump this (2, 3, ...) ONLY when the rule text changes in a way that could turn
+# a previously-clean triage into a NEW conflict/duplicate finding. Do NOT bump it
+# for cosmetic edits, wording tweaks, or ordinary plugin releases — those change
+# plugin.json's version, not this. Markers record the epoch they reconciled
+# against; an older-or-equal epoch is accepted, a newer epoch re-arms exactly once.
+RECON_RULES_VERSION='2'   # 1->2: the first-run pass now ALSO runs a read-only
+                          # automation census, so a formerly-clean triage can newly
+                          # find undocumented (or stale-documented) automation.
+DIR="$HOME/.claude/.no-hidden-changes"
+# Global reconciliation is per-HOST. A synced/migrated ~/.claude (dotfiles, Migration
+# Assistant, corp-managed home) must NOT carry machine A's "already reconciled" marker
+# to machine B — whose crontab and launch agents are its own, unseen automation. Keying
+# the global marker by host makes the one-time census run once PER MACHINE, not once ever.
+HOST_KEY="$(printf '%s' "$(hostname 2>/dev/null || uname -n)" | cksum | tr -d ' ')"
+GLOBAL="$DIR/global-reconciled-${HOST_KEY}"
+SURFACES="$DIR/surfaces-${HOST_KEY}"
+PROJ_KEY="$(printf '%s' "${PWD:-unknown}" | cksum | tr -d ' ')"
+PROJ="$DIR/proj_${PROJ_KEY}"
+
+# --- pure-bash JSON string escaper (bash 3.2 verified) ---
+json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}    # backslash -> \\  (MUST run first)
+  s=${s//\"/\\\"}    # "         -> \"
+  s=${s//$'\n'/\\n}  # newline   -> \n
+  s=${s//$'\t'/\\t}  # tab       -> \t
+  s=${s//$'\r'/\\r}  # CR        -> \r
+  printf '%s' "$s"
+}
+
+# A marker "counts" (already reconciled — do NOT re-arm) iff its stamped triage
+# epoch is >= the current one. Older-or-equal epochs are accepted; re-arming
+# happens only when RECON_RULES_VERSION has advanced past what the marker records.
+# Legacy markers stamped with a dotted plugin version (e.g. "1.3.0") predate the
+# epoch scheme and map to epoch 1. Missing/empty/non-numeric values re-arm (safe:
+# the pass simply re-offers next session and cannot be silently lost).
+stamped_current() {
+  [ -f "$1" ] || return 1
+  local v; v="$(cat "$1" 2>/dev/null)"
+  case "$v" in *.*) v=1 ;; esac                 # legacy dotted version -> epoch 1
+  [ "$v" -ge "$RECON_RULES_VERSION" ] 2>/dev/null
+}
+
+# --- automation surfaces fingerprint (cheap change-detector for the census) ---
+# Hash the SET of STABLE, user-controllable automation surfaces — NOT their volatile
+# runtime state. A change here (a new cron line, launch agent, hook, or script) re-arms
+# the one-time census, so automation added AFTER first run — by hand, by another tool,
+# or while this plugin was disabled — is still caught. Deliberately EXCLUDES
+# `launchctl list` (churns with PIDs/transient jobs -> false re-arms) and system dirs;
+# the model's census still reads those live, they just must not drive this check.
+surfaces_fingerprint() {
+  # Sorted before hashing: settings.json/settings.local.json get rewritten whenever any
+  # hook is installed/edited (by this or any other tool), and a rewrite can reorder existing
+  # "command" entries (JSON key/array order isn't guaranteed stable across writers) without
+  # changing the actual SET of automation. Hashing the raw (unsorted) stream turned every
+  # such reorder into a false re-arm — the census kept "changing" every session even though
+  # nothing about installed automation had. Sorting makes the fingerprint depend only on the
+  # set of lines, not their order.
+  {
+    crontab -l 2>/dev/null
+    ls -1 "$HOME/Library/LaunchAgents" 2>/dev/null
+    ls -1 "$HOME/.claude/scripts" 2>/dev/null
+    grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' "$HOME/.claude/settings.json"       2>/dev/null
+    grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' "$HOME/.claude/settings.local.json" 2>/dev/null
+  } 2>/dev/null | sort | cksum | tr -d ' '
+}
+
+# Documented test seam: print the fingerprint and exit (used by tests/test_hook.sh).
+[ "${NHC_EMIT_SURFACES:-0}" = "1" ] && { surfaces_fingerprint; exit 0; }
+
+# Has the installed-automation set changed since the last census? (Absent baseline
+# never re-arms on its own — the first global pass seeds it.)
+CUR_SURFACES="$(surfaces_fingerprint)"
+surfaces_changed=0
+if [ -f "$SURFACES" ]; then
+  prev="$(cat "$SURFACES" 2>/dev/null)"
+  [ -n "$prev" ] && [ "$prev" != "$CUR_SURFACES" ] && surfaces_changed=1
+fi
+
+NUDGE="no-hidden-changes: before any change that disables, hides, parks, removes, or relocates state or config — or reaches for a custom side-channel instead of a native toggle or menu — STOP and consult the no-hidden-changes skill first. Treat a tool no longer showing something in its own UI (or continuing to hide something that has become valid) as a red flag, not a detail. Three shapes of this are easy to commit by reflex, so check them BEFORE you start editing rather than at commit time: (1) EDIT THE SOURCE, NOT A DERIVED COPY — an installed plugin cache (~/.claude/plugins/cache/...), a symlinked live file, or a generated config is overwritten by the next update with no error and no version change, so the fix silently reverts and cannot ship; find the source repo and change that. Note the installed copy may also be OLDER than the repo, so confirm which one your change must reach. (2) BRANCH, and stage BY PATH — do not accumulate unrelated edits and land them on the default branch as one lump, and never \`git add -A\`, which stages the user's unsaved work too; and an ignore rule by EXACT NAME protects only the file it names, so run \`git check-ignore -v <path>\` before the FIRST commit of any new private file (no output is the warning), and widen the pattern rather than adding names one at a time; if a checkout is reached through symlinks or a launcher, its branch is global state, so use a worktree instead of switching it. (3) NEVER force-push or move a published tag unasked — fix forward as the next version; a rewrite does not even remove a leaked secret."
+
+# Shared triage-first reconciliation instructions (brevity-capped).
+COMMON="Follow the skill's \"Reconcile with the user's existing guidance\" section, TRIAGE-FIRST: silently compare the readable guidance (global MEMORY.md + memory dir, CLAUDE.md/AGENTS.md) to the rule BEFORE saying anything. If nothing conflicts or duplicates, write the marker(s) and reply with ONE short line led by 🟢 (e.g. '🟢 Checked your existing setup — zero conflicts, nothing to reconcile.'), then proceed to the user's actual request; do NOT explain the feature at length. If you DO find something, lead with one 🟡 line ('🟡 Found N item(s) worth reconciling — below.'), then surface concisely: quote existing text verbatim, frame NEUTRALLY (both possibly-intentional, no 'old is wrong' framing), DEFAULT TO KEEPING it, make ONE informed batch offer (never blind 'apply all'); only in this path add a short note that claude.ai/Desktop custom instructions could not be read. Persist per the skill: personal auto-memory / uncommitted CLAUDE.md edited in place after confirmation; committed CLAUDE.md and AGENTS.md offered as a diff; record declines as durable notes. Keep total output brief and non-lecturing."
+
+GLOBAL_PROMPT="[no-hidden-changes first-run reconciliation — non-blocking; do it around the user's request, don't derail an urgent task] First session since install on THIS machine (or the set of installed automation changed, or a newer reconciliation version). Do a ONE-TIME triage over the global guidance AND this project. ${COMMON} ALSO run a ONE-TIME, READ-ONLY AUTOMATION CENSUS: enumerate installed automation — Claude Code hooks (~/.claude/settings.json + settings.local.json, and any project .claude/settings.json), the user crontab (crontab -l), launchd agents (~/Library/LaunchAgents + launchctl list), scripts in ~/.claude/scripts, and session crons (CronList) — and cross-check each against your discoverable records (global MEMORY.md + memory dir, CLAUDE.md/AGENTS.md). A finding is EITHER an active automation with NO discoverable record (offer to write a documenting memory/record naming the mechanism, its trigger, and where it lives) OR a record describing automation that no longer exists (offer to correct or remove it). EXCLUDE this plugin's own reconcile-check hook and OS/vendor-managed entries (e.g. Homebrew/Adobe launch agents). Fold census findings into the SAME 🟢/🟡 single batch as the guidance triage — same DEFAULT-KEEP, per-item, confirm-before-writing rules; never write silently. ONLY after the pass completes or the user dismisses it, create dir \"${DIR}\" and write \"${RECON_RULES_VERSION}\" into BOTH \"${GLOBAL}\" and \"${PROJ}\", and write \"${CUR_SURFACES}\" into \"${SURFACES}\". Do not create them beforehand."
+
+PROJ_PROMPT="[no-hidden-changes reconciliation for THIS project — non-blocking] First session for the plugin in this project. Triage this project's CLAUDE.md/AGENTS.md/local guidance against the rule. ${COMMON} ONLY after the pass completes or is dismissed, write \"${RECON_RULES_VERSION}\" into \"${PROJ}\" (create dir \"${DIR}\" first). Do not create it beforehand."
+
+GLOBAL_BANNER="👋 no-hidden-changes active — on your first message I'll do a one-time check of this rule against your existing setup, plus a quick read-only inventory of installed automation (hooks, cron, launch agents, scripts), and flag anything that conflicts or looks undocumented. Nothing changes without your OK."
+PROJ_BANNER="👋 no-hidden-changes: new project — on your first message I'll check this rule against this project's guidance. Nothing changes without your OK."
+
+# Decide which (if any) first-run branch applies.
+context="$NUDGE"
+banner=""
+if ! stamped_current "$GLOBAL" || [ "$surfaces_changed" = "1" ]; then
+  context="${NUDGE}"$'\n\n'"${GLOBAL_PROMPT}"
+  banner="$GLOBAL_BANNER"
+elif ! stamped_current "$PROJ"; then
+  context="${NUDGE}"$'\n\n'"${PROJ_PROMPT}"
+  banner="$PROJ_BANNER"
+fi
+
+# Emit one JSON object. systemMessage only when a banner is set.
+if [ -n "$banner" ]; then
+  printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' \
+    "$(json_escape "$banner")" "$(json_escape "$context")"
+else
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' \
+    "$(json_escape "$context")"
+fi

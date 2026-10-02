@@ -44,15 +44,8 @@ _UNSET = object()
 
 
 def store_path():
-    if os.environ.get("WAYPOINTS_FILE"):
-        return os.environ.get("WAYPOINTS_FILE")
-    gemini_path = os.path.expanduser("~/.gemini/waypoints.json")
-    if os.path.exists(gemini_path):
-        return gemini_path
-    claude_path = os.path.expanduser("~/.claude/waypoints.json")
-    if os.path.exists(claude_path):
-        return claude_path
-    return gemini_path
+    return os.environ.get("WAYPOINTS_FILE") or os.path.expanduser(
+        "~/.claude/waypoints.json")
 
 
 def archive_path(store=None):
@@ -620,6 +613,14 @@ def slugify(title, maxlen=30):
     return s or "item"
 
 
+_ID_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def is_valid_id(s):
+    """True for the shape slugify() produces: lowercase alnum runs joined by single dashes."""
+    return bool(s) and _ID_RE.fullmatch(s) is not None
+
+
 def _unique_id(items, base):
     existing = {i.get("id") for i in items}
     if base not in existing:
@@ -899,9 +900,99 @@ def stale_waiting(items, archived=()):
     return out
 
 
+# Vague title patterns that should be rejected
+# These patterns match when the object is vague (it, this, that, something, things, stuff, etc.)
+# NOT when there's a specific identifier (like "Do X", "Fix login", "Add user")
+# Patterns are loaded from config/vague_title_patterns.json
+
+def _load_vague_title_patterns():
+    """Load vague title patterns from JSON config file."""
+    import os
+    import json
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "vague_title_patterns.json")
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        patterns = [item["pattern"] for item in config.get("vague_title_patterns", [])]
+        min_length = config.get("min_title_length", 1)
+        return patterns, min_length
+    except Exception:
+        # Fallback to hardcoded patterns if config file not found
+        return _FALLBACK_VAGUE_TITLE_PATTERNS, 1
+
+
+# Fallback patterns in case config file is not available
+_FALLBACK_VAGUE_TITLE_PATTERNS = [
+    # Verb + vague object (it, this, that, something, things, stuff, etc.)
+    # Includes phrasal verbs like "clean up", "fix up", "sort out", "set up", etc.
+    r"^(fix|update|change|modify|adjust|tweak|work on|look into|investigate|check|review)\s+(it|this|that|something|things|stuff|up|out|down|dependencies|deps)\s*$",
+    r"^(improve|optimize|refactor|clean\s+up|cleanup|fix\s+up)\s+(it|this|that|something|things|stuff|up|out)\s*$",
+    r"^(handle|deal with|address|resolve|sort\s+out)\s+(it|this|that|something|things|stuff|up|out)\s*$",
+    r"^(make|create|add|build|implement|write|do)\s+(it|this|that|something|things|stuff|up|out)\s*$",
+    r"^(fix|debug|solve|resolve)\s+(it|this|that|bug|issue)\s*$",
+    r"^(update|upgrade|bump|patch)\s+(it|this|that|version|dep|dependency|dependencies|deps)\s*$",
+    r"^(remove|delete|drop|kill)\s+(it|this|that|code|file)\s*$",
+    r"^(test|check|verify|validate)\s+(it|this|that)\s*$",
+    r"^(review|audit|scan|scan for)\s+(it|this|that|something|things|stuff)\s*$",
+    # Quantifier + vague noun (only when the noun is vague like fix/change/update/task/item)
+    r"^(some|several|various|multiple|many|a few)\s+(fix|change|update|improvement|issue|bug|task)s?\s*$",
+    r"^(various|assorted|misc|miscellaneous|random)\s+(fix|change|update|task|item)s?\s*$",
+    # Verb forms with vague object (it/this/that)
+    r"^(fix|fixes|fixing|update|updates|updating|change|changes|changing)\s+(it|this|that)\s*$",
+    r"^(misc|todo|tbd|wip|in progress|ongoing)\s*:?",
+    # Standalone verb forms that are vague without object
+    r"^(fix|update|change|improve|refactor|clean|test|review|check|verify|fixes|fixing|updates|updating|changes|changing|updates|upgrading|bumping|patching|do|test|check|verify|review|audit|scan)\s*$",
+    # Standalone nouns that are vague without qualifier - only truly generic ones
+    r"^(fixes|fixing|updates|updating|changes|changing|improvements|refactoring|cleaning|testing|reviewing|checking|verifying|validating|auditing|scanning|dependencies|deps|bugs|issues|tasks|todos)\s*$",
+]
+
+# Load patterns from config file
+_VAGUE_TITLE_PATTERNS, _MIN_TITLE_LENGTH = _load_vague_title_patterns()
+
+
+def _is_vague_title(title: str) -> bool:
+    """Check if a title is too vague or incomplete.
+
+    Returns True if the title matches known vague patterns.
+    """
+    if not title:
+        return True
+    t = title.strip().lower()
+    if len(t) < _MIN_TITLE_LENGTH:
+        return True
+    for pattern in _VAGUE_TITLE_PATTERNS:
+        if re.match(pattern, t):
+            return True
+    return False
+
+
+def validate_title(title: str) -> tuple[bool, str]:
+    """Validate a waypoint title.
+
+    Returns (is_valid, error_message). If valid, error_message is empty.
+    """
+    if not title or not title.strip():
+        return False, "Title cannot be empty"
+    if _is_vague_title(title):
+        return False, ("Title is too vague. Please use a specific, actionable title that describes "
+                       "what will be done and what the expected outcome is. "
+                       "Examples: 'Fix login redirect loop in auth.py:123', "
+                       "'Add unit tests for user validation in user_service.py', "
+                       "'Update README with new API endpoint documentation'")
+    return True, ""
+
+
+def validate_title_or_raise(title: str):
+    """Validate title and raise ValueError if invalid."""
+    ok, msg = validate_title(title)
+    if not ok:
+        raise ValueError(msg)
+
+
 def add_item(items, title, detail="", surface_on=None, created=None, id=None, summary=None,
              tier=None, gate_reason=None, waiting_on=None):
     validate_verdict(tier, gate_reason, waiting_on)
+    validate_title_or_raise(title)
     item = {
         "id": id or _unique_id(items, slugify(title)),
         "title": title,
@@ -1470,3 +1561,27 @@ def format_banner(items, ungate_hint=None, all_items=None, archived=()):
                f"`waypoints.py resolve` releases them." if landed else ".")
         lines.append(_wrap(wl, "  "))
     return "\n".join(lines)
+
+_EVIDENCE_PATTERNS = (
+    r"\b[0-9a-f]{7,40}\b",                 # commit sha
+    r"\b\d+\s*/\s*\d+\b",                 # test count 341/341
+    r"\bv?\d+\.\d+(?:\.\d+)?\b",          # version / tag
+    r"[\w./-]+\.[A-Za-z]{1,6}(?::\d+)?",  # file, optionally file:line
+    r"https?://\S+",                       # URL
+    r"#\d+",                               # issue / PR
+    r"`[^`]+`",                             # a quoted command
+)
+
+
+def points_at_something(text):
+    """True when `text` names something a reader could actually go and open.
+
+    This is the checkable reading of "evidence it can point to". It is deliberately NOT a
+    length check: padding satisfies a minimum-characters rule without adding information, so
+    such a rule would only appear to enforce the requirement. A reference -- a sha, a
+    file:line, a version, a test count, a URL, an issue, or a command -- is the part that lets
+    someone else verify the claim, which is the whole point of recording it.
+    """
+    if not text:
+        return False
+    return any(re.search(p, text) for p in _EVIDENCE_PATTERNS)

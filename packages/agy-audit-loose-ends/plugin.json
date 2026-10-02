@@ -1,8 +1,12 @@
 {
   "name": "agy-audit-loose-ends",
-  "version": "0.5.5",
-  "description": "Durable Record Reconciliation and Secret Audit Engine for Google Antigravity",
+  "version": "0.10.0",
+  "description": "Durable record reconciliation, 5-layer secret scanner/redactor, observation logging, and milestone wrap-up auditor.",
   "author": "Heiko Brantsch",
   "license": "MIT",
-  "skills": ["skills/audit-loose-ends"]
+  "category": "tools",
+  "skills": [
+    "skills/audit-loose-ends",
+    "skills/harvest-lessons"
+  ]
 }

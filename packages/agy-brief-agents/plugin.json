@@ -1,8 +1,11 @@
 {
   "name": "agy-brief-agents",
-  "version": "0.1.4",
-  "description": "Subagent Context Briefing Compiler and Rule Injector for Google Antigravity",
+  "version": "0.1.5",
+  "description": "Subagent context briefing compiler, staleness fingerprinting, and rule injector for Google Antigravity.",
   "author": "Heiko Brantsch",
   "license": "MIT",
-  "skills": ["skills/brief-agents"]
+  "category": "tools",
+  "skills": [
+    "skills/brief-agents"
+  ]
 }

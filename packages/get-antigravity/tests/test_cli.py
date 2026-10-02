@@ -66,7 +66,7 @@ class TestGetAntigravityCLI(unittest.TestCase):
         self.assertIsInstance(data, list)
         pkg_names = [p["name"] for p in data]
         self.assertIn("get-antigravity", pkg_names)
-        self.assertIn("agy-local-delegate", pkg_names)
+        self.assertIn("agy-free-agent", pkg_names)
 
     def test_cli_plan_json(self):
         buf = io.StringIO()
@@ -82,7 +82,7 @@ class TestGetAntigravityCLI(unittest.TestCase):
     def test_cli_plan_with_only_flag(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
-            exit_code = cli.main(["plan", "--only", "agy-local-delegate", "--json"])
+            exit_code = cli.main(["plan", "--only", "agy-free-agent", "--json"])
         self.assertEqual(exit_code, 0)
         plan = json.loads(buf.getvalue())
         self.assertEqual(plan["catalog_count"], 1)

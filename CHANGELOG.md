@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.6.0] - 2026-10-02
+
+### 🚀 Milestone Release: Complete Monorepo Package Parity & Version Sync
+
+#### `agy-transcript-distiller` (v0.8.3)
+* Upgraded from v0.1.0 to v0.8.3 full compaction engine.
+* Added dual format output (.compact.jsonl.txt and .indexed_capsule.md) and 83 unit tests.
+
+#### `agy-audit-loose-ends` (v0.10.0)
+* Upgraded from v0.5.5 to v0.10.0.
+* Added `audit-scan.py`, `verify-state.py`, `redact-secret.py`, `waypoint-reconcile.py`, `observation-log.py`, `memory-index-audit.py`, and `harvest-lessons` skill.
+
+#### `agy-cost-tracker` (v0.9.1)
+* Upgraded from v0.4.0 to v0.9.1.
+* Added `statusline-render.sh`, `cost-ledger-capture.sh`, `budget-tally.py`, `markup` command, and 108 unit tests.
+
+#### `agy-waypoints` (v0.11.0)
+* Upgraded from v0.8.0 to v0.11.0.
+* Full 351 unit test coverage and complete CLI feature set.
+
+#### Package Upgrades & Test Verification
+* Upgraded `agy-no-hidden-changes` (v1.7.0), `agy-resume-interrupted` (v0.4.1), `agy-brief-agents` (v0.1.5), `agy-run-to-completion` (v0.6.0).
+* Verified 100% pass rate across all 774 unit tests in the suite.
+
+---
+
 ## [v1.5.0] - 2026-10-02
 
 ### 🚀 Milestone Release: Feature Parity Expansion & Package Alignment
