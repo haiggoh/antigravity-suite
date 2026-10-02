@@ -4,15 +4,12 @@ Local Apple Silicon model delegation and full AGY local-engine launcher.
 
 ## Full local session
 
-One-time AGY provider setup is required in `~/.gemini/antigravity-cli/settings.json`:
+The launchers (`agy-local-mode`, `agy-csl`, `csl`) now inject the required
+`modelProvider: "gemini"` setting dynamically via a temporary `--gemini_dir`,
+so **no manual edit to `settings.json` is needed**. This preserves cloud AGY
+sessions while enabling the local proxy.
 
-```json
-{
-  "modelProvider": "gemini"
-}
-```
-
-Preserve any other existing settings in that file. Then run:
+Simply run:
 
 ```bash
 agy-local-mode                         # opens picker (Ornith default)
