@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""agy-evict — safely inspect and evict idle local inference servers.
+
+Attached AGY and Claude Code sessions are protected by default, including for
+--all, --port, and --pid. Use --force-attached only when intentionally ending
+the attached client session.
+"""
+
+import argparse
+import os
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
+
+import agy_local_delegate_core as core
+
+
+def attachment_label(server):
+    owners = server.get("attached_clients", [])
+    return ", ".join(owners) if owners else "no"
+
+
+def print_status(servers):
+    if not servers:
+        print(
+            "No local model servers or proxies detected on "
+            "8000-8015, 8080, or 9191-9205."
+        )
+        return
+
+    print(
+        "┌──────┬────────┬──────────────┬──────────┬──────────"
+        "┬──────────────────────────────┬────────┐"
+    )
+    print(
+        "│ Port │  PID   │   Backend    │  RSS MB  │  Uptime  "
+        "│ Attached clients             │  Rank  │"
+    )
+    print(
+        "├──────┼────────┼──────────────┼──────────┼──────────"
+        "┼──────────────────────────────┼────────┤"
+    )
+
+    for server in servers:
+        owners = attachment_label(server)
+        print(
+            f"│ {server['port']:<4} │ {server['pid']:<6} │ "
+            f"{server['backend']:<12} │ {server['rss_mb']:>8.1f} │ "
+            f"{server['etime']:<8} │ {owners:<28} │ "
+            f"#{server['rank']:<5} │"
+        )
+
+    print(
+        "└──────┴────────┴──────────────┴──────────┴──────────"
+        "┴──────────────────────────────┴────────┘"
+    )
+    print(
+        "Rank: #0 idle proxy, #1 idle model server, "
+        "#3 attached/protected."
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Antigravity local model server eviction utility"
+    )
+    parser.add_argument(
+        "--status", "-s", action="store_true",
+        help="display resident servers and attachment owners",
+    )
+    parser.add_argument(
+        "--dry-run", "-n", action="store_true",
+        help="preview eligible eviction without signaling",
+    )
+    parser.add_argument(
+        "--all", action="store_true",
+        help="evict all unattached servers",
+    )
+    parser.add_argument(
+        "--port", type=int,
+        help="target one listening port",
+    )
+    parser.add_argument(
+        "--pid", type=int,
+        help="target one listener PID",
+    )
+    parser.add_argument(
+        "--force-attached",
+        action="store_true",
+        help="allow explicitly selected attached servers to be terminated",
+    )
+    args = parser.parse_args()
+
+    if args.force_attached and not (
+        args.all or args.port is not None or args.pid is not None
+    ):
+        parser.error(
+            "--force-attached requires --all, --port, or --pid"
+        )
+
+    servers = core.list_resident_servers()
+
+    if args.status:
+        print_status(servers)
+        return 0
+
+    if not servers:
+        print("No local model servers or proxies are currently running.")
+        return 0
+
+    results = core.evict_servers(
+        port=args.port,
+        pid=args.pid,
+        evict_all=args.all,
+        dry_run=args.dry_run,
+        force_attached=args.force_attached,
+    )
+
+    if not results:
+        print("No matching eligible server found.")
+        return 1
+
+    reclaimed = 0.0
+    eligible = 0.0
+    protected = 0
+
+    for result in results:
+        action = result["action"]
+        owners = ", ".join(result.get("attached_clients", []))
+
+        if action == "protected_attached":
+            protected += 1
+            print(
+                f"[Protected] PID {result['pid']} on port "
+                f"{result['port']} ({result['backend']}) is attached to "
+                f"{owners or 'an active client'}."
+            )
+            continue
+
+        if action == "would_evict":
+            eligible += result["rss_mb"]
+            label = "Would evict"
+        elif action.startswith("evicted_"):
+            reclaimed += result["rss_mb"]
+            label = "Evicted"
+        else:
+            label = "Skipped"
+
+        print(
+            f"[{label}] PID {result['pid']} on port "
+            f"{result['port']} ({result['backend']}) — "
+            f"{result['rss_mb']} MB RSS ({action})"
+        )
+
+    if args.dry_run:
+        print(
+            f"\n[+] Eligible unattached memory: {eligible:.1f} MB "
+            f"(~{eligible / 1024:.2f} GB)"
+        )
+    else:
+        print(
+            f"\n[+] Memory reclaimed: {reclaimed:.1f} MB "
+            f"(~{reclaimed / 1024:.2f} GB)"
+        )
+
+    if protected and reclaimed == 0 and eligible == 0:
+        print_status(servers)
+        print(
+            "\nNo attached server was terminated. To intentionally end an "
+            "attached client, combine --force-attached with --port, --pid, "
+            "or --all."
+        )
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

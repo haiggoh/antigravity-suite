@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.6.1] - 2026-10-02
+
+### 🛠️ Fix: Dynamic Settings Injection for Local Mode Launchers
+
+#### `agy-free-agents` (v0.21.1)
+* Fixed `agy-local-mode`, `agy-csl`, and `csl` launchers to inject `modelProvider: "gemini"` via a temporary `--gemini_dir` instead of requiring it in the user's persistent `settings.json`.
+* This prevents cloud AGY sessions from being broken by the local-mode configuration.
+* Temporary settings directory is automatically cleaned up on exit.
+
 ## [v1.6.0] - 2026-10-02
 
 ### 🚀 Milestone Release: Complete Monorepo Package Parity & Version Sync
